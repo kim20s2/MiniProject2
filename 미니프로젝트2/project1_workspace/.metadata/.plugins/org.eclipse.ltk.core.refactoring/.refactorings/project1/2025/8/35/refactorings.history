@@ -1,0 +1,3 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">&#x0A;<refactoring comment="Rename resource &apos;project1/Core/Src/PIRSensor_Task.c&apos; to &apos;PIR_Task.c&apos;" description="Rename resource &apos;PIRSensor_Task.c&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="Core/Src/PIRSensor_Task.c" name="PIR_Task.c" stamp="1756015458109" updateReferences="true"/>&#x0A;<refactoring comment="Rename resource &apos;project1/Core/Src/Schedule.c&apos; to &apos;Schedule_Task.c&apos;" description="Rename resource &apos;Schedule.c&apos;" flags="7" id="org.eclipse.ltk.core.refactoring.rename.resource" input="Core/Src/Schedule.c" name="Schedule_Task.c" stamp="1756032351867" updateReferences="true"/>
+</session>

@@ -1,0 +1,3 @@
+../Core/Src/Weather_Task.c:23:12:json_pick_value	14
+../Core/Src/Weather_Task.c:51:20:pty_text	9
+../Core/Src/Weather_Task.c:67:6:Weather_Task	9

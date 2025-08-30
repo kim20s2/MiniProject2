@@ -1,0 +1,26 @@
+/*
+ * lcd_i2c.h
+ *
+ *  Created on: Aug 22, 2025
+ *      Author: kim20
+ */
+
+#ifndef INC_LCD_I2C_H_
+#define INC_LCD_I2C_H_
+
+#include "main.h"
+#include <stdarg.h>
+
+#ifndef LCD_I2C_ADDR
+#define LCD_I2C_ADDR (0x27 << 1)   // PCF8574 기본주소 0x27 (7bit) -> HAL은 8bit 주소 사용
+#endif
+
+void lcd_init(I2C_HandleTypeDef *hi2c);
+void lcd_clear(void);
+void lcd_home(void);
+void lcd_goto(uint8_t row, uint8_t col);   // row: 0|1, col: 0~15
+void lcd_write(const char *s);
+void lcd_printf(const char *fmt, ...);
+
+
+#endif /* INC_LCD_I2C_H_ */

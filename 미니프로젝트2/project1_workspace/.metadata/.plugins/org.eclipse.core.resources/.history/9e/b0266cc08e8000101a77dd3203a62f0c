@@ -1,0 +1,99 @@
+#include "lcd.h"
+#include "main.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include "cmsis_os.h"
+
+// 외부 공유자원
+extern osMutexId_t NTP_MutexHandle;
+extern osMutexId_t Weather_MutexHandle;
+extern time_t ntp_time;
+
+extern volatile float g_t1h;  // °C
+extern volatile int   g_reh;  // %
+extern volatile int   g_pty;  // PTY 코드
+
+// 강수 텍스트
+static const char* pty_text(int code) {
+    switch (code) {
+        case 0: return "SUN";
+        case 1: return "RAIN";
+        case 2: return "R/S";
+        case 3: return "SNOW";
+        case 4: return "SHWR";
+        case 5: return "DROP";
+        case 6: return "D/S";
+        case 7: return "SFLT";
+        default: return "?";
+    }
+}
+
+void LCD_Task(void *argument)
+{
+    LCD_Init();
+    LCD_Clear();
+
+    time_t base_epoch = 0;
+    uint32_t tick = 0;
+    uint32_t last_sync_sec = 0;
+
+    // 최초 동기화
+    if (osMutexAcquire(NTP_MutexHandle, pdMS_TO_TICKS(200)) == osOK) {
+        base_epoch = ntp_time;
+        osMutexRelease(NTP_MutexHandle);
+    } else {
+        base_epoch = time(NULL);
+    }
+    last_sync_sec = 0;
+    tick = 0;
+
+    TickType_t last = xTaskGetTickCount();
+    const TickType_t period = pdMS_TO_TICKS(1000);
+
+    for (;;)
+    {
+        // 20초마다 NTP 재동기화
+        if ((tick - last_sync_sec) >= 20) {
+            if (osMutexAcquire(NTP_MutexHandle, pdMS_TO_TICKS(50)) == osOK) {
+                base_epoch = ntp_time;
+                osMutexRelease(NTP_MutexHandle);
+            } else {
+                base_epoch = time(NULL);
+            }
+            last_sync_sec = tick;
+        }
+
+        // 현재 시각 계산
+        time_t now = base_epoch + (time_t)(tick - last_sync_sec);
+        struct tm *k = localtime(&now);
+
+        // 1행: 시간 고정 위치 출력
+        char line1[17];
+        snprintf(line1, sizeof(line1), "%02d-%02d %02d:%02d:%02d",
+                 (k->tm_mon + 1), k->tm_mday, k->tm_hour, k->tm_min, k->tm_sec);
+        LCD_SetCursor(0, 0);
+        LCD_Print(line1);
+
+        // 2행: 날씨 표시
+        float t_c = 0.0f; int rh = -1; int pty = -1;
+        if (osMutexAcquire(Weather_MutexHandle, pdMS_TO_TICKS(10)) == osOK) {
+            t_c = g_t1h; rh = g_reh; pty = g_pty;
+            osMutexRelease(Weather_MutexHandle);
+        }
+
+        char line2[17];
+        if (rh >= 0 && pty >= 0) {
+            snprintf(line2, sizeof(line2), "T=%2.1f RH=%d %s", t_c, rh, pty_text(pty));
+        } else {
+            snprintf(line2, sizeof(line2), "Weather: --");
+        }
+        LCD_SetCursor(1, 0);
+        LCD_Print(line2);
+
+        tick++;
+        vTaskDelayUntil(&last, period); // 정확히 1Hz 주기
+    }
+}

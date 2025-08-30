@@ -1,0 +1,20 @@
+/*
+ * PIR_Task.h
+ *
+ *  Created on: Aug 24, 2025
+ *      Author: kim20
+ */
+
+#ifndef INC_PIR_TASK_H_
+#define INC_PIR_TASK_H_
+
+#pragma once
+#include "stm32f4xx_hal.h"
+
+#define PIR_GPIO_Port   GPIOA      // <- 배선에 맞게 수정
+#define PIR_Pin         GPIO_PIN_10 // <- 배선에 맞게 수정
+
+void PIR_Task(void *argument);
+
+
+#endif /* INC_PIR_TASK_H_ */

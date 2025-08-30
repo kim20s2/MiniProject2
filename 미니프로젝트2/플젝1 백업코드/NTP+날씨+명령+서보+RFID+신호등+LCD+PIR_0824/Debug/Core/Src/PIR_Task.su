@@ -1,0 +1,7 @@
+../Core/Inc/LED_FAN.h:21:20:LED_ON	8	static
+../Core/Inc/LED_FAN.h:22:20:LED_OFF	8	static
+../Core/Inc/LED_FAN.h:23:20:FAN_ON	8	static
+../Core/Inc/LED_FAN.h:24:20:FAN_OFF	8	static
+../Core/Src/PIR_Task.c:13:24:MS2T	40	static
+../Core/Src/PIR_Task.c:21:6:PIR_ArmIdleTimer	8	static
+../Core/Src/PIR_Task.c:27:6:PIR_Task	48	static

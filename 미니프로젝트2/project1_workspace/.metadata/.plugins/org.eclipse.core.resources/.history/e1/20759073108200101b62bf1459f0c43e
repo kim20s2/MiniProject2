@@ -1,0 +1,46 @@
+// Core/Src/TH_Task.c
+#include "cmsis_os.h"
+#include "dht11.h"
+#include "LED_FAN.h"
+#include <stdio.h>
+#include "FanHold.h"
+#include "main.h"
+#include <string.h>
+
+extern UART_HandleTypeDef huart6;
+
+void TH_Task(void *argument)
+{
+    // 초기 지연(전원 안정화)
+    osDelay(2000);
+
+    for(;;){
+        uint8_t t=0, h=0;
+        char sendBuf[50];
+        int rc = DHT11_Read(&t, &h);
+        if (rc == 0) {
+            printf("[DHT11] T=%uC H=%u%%\r\n", t, h);
+
+            sprintf(sendBuf, "[%s]%s@%u@%u\n", "KSH_SQL", "SENSOR", t, h);
+            HAL_UART_Transmit(&huart6, (uint8_t *)sendBuf, strlen(sendBuf), 0xFFFF);
+            memset(sendBuf, 0, sizeof(sendBuf));
+    		sprintf(sendBuf, "[%s]SETDB@%s@%u,%u\n", "SQL", "sensor", t, h);
+    		HAL_UART_Transmit(&huart6, (uint8_t *)sendBuf, strlen(sendBuf), 0xFFFF);
+
+            if (t >= 30) {
+                FAN_ON();
+            } else {
+            	if(fan_hold == 0)
+            		FAN_OFF();
+            }
+            // LED도 상태표시 원하면:
+            // (t>=28) ? LED_ON() : LED_OFF();
+        } else {
+            printf("[DHT11] Read Fail rc=%d\r\n", rc);
+            // 실패 시 팬 유지/정지 정책 선택:
+            // FAN_OFF();
+        }
+
+        osDelay(5000); // 2초 주기 (DHT11은 1~2s 주기 권장)
+    }
+}

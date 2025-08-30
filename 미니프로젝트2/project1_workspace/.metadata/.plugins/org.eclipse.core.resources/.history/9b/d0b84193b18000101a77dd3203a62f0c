@@ -1,0 +1,26 @@
+/*
+ * Weather_Task.h
+ *
+ *  Created on: Aug 19, 2025
+ *      Author: kim20
+ */
+
+#ifndef INC_WEATHER_TASK_H_
+#define INC_WEATHER_TASK_H_
+
+// 공용 헤더(예: Weather_Task.h)
+#include "cmsis_os.h"
+typedef struct {
+    float t_c;
+    int   rh;
+    int   pty;
+    uint32_t tick_updated;  // 마지막 성공 갱신 시각 (tick)
+    uint8_t  valid;         // 1=정상값 존재
+} weather_cache_t;
+
+extern osMutexId_t Weather_MutexHandle;
+extern volatile weather_cache_t g_weather;
+
+void Weather_Task(void *argument);
+
+#endif /* INC_WEATHER_TASK_H_ */

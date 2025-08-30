@@ -1,0 +1,173 @@
+#include "Sensor_Task.h"
+#include "cmsis_os.h"
+#include "adc.h"
+#include "gpio.h"
+#include "app_common.h"
+#include "PIR_Task.h"     // g_pir_detected (0/1)
+#include "usart.h"
+#include <stdio.h>
+#include "main.h"
+#include <string.h>
+#include <stdbool.h>
+
+// ===== 튜닝 =====
+#define GAS_THRESHOLD        2000      // 가스 임계(환경에 맞게)
+#define SAMPLE_PERIOD_MS      200      // 폴링 주기
+#define SUSTAIN_MS           2000      // ★ 2초 연속 감지(모든 센서 공통)
+#define SUSTAIN_PIR_MS       1200      // PIR 1초 연속 감지
+#define ALARM_LATCH_MS      30000      // ★ 30초 무감지시 LED/부저 OFF, PIR 표시 유지 시간
+
+// ===== 진동/플레임 액티브 레벨 =====
+// LM393류 보드(많음): 감지 시 LOW
+#define VIB_ACTIVE_LEVEL     GPIO_PIN_RESET
+#define FLM_ACTIVE_LEVEL     GPIO_PIN_RESET
+
+// ===== LED/부저 (Active-Low 가정: LOW=ON) =====
+// Active-High 보드면 *_LEVEL을 반대로 바꾸세요.
+#define LED_ON_LEVEL         GPIO_PIN_SET
+#define LED_OFF_LEVEL        GPIO_PIN_RESET
+#define BUZ_ON_LEVEL         GPIO_PIN_SET
+#define BUZ_OFF_LEVEL        GPIO_PIN_RESET
+
+static inline void outputs_set(bool on){
+    HAL_GPIO_WritePin(GPIOA, LED_Alarm_Pin,    on ? LED_ON_LEVEL : LED_OFF_LEVEL);
+    HAL_GPIO_WritePin(GPIOA, Buzzer_Alarm_Pin, on ? BUZ_ON_LEVEL : BUZ_OFF_LEVEL);
+}
+
+static inline uint32_t ms_now(void){ return HAL_GetTick(); }
+
+extern volatile uint8_t g_pir_detected;   // PIR_Task가 갱신(0/1)
+
+void Sensor_Task(void *argument)
+{
+    // 2초 연속 감지용 상태
+    uint32_t gas_t0=0, vib_t0=0, flm_t0=0, pir_t0=0;
+    uint8_t  gas_hold=0, vib_hold=0, flm_hold=0, pir_hold=0;
+
+    // LED/부저 타임아웃
+    bool     outputs_on    = false;
+    uint32_t last_alarm_ms = 0;
+    // ★ 1행(가스/진동/플레임) 표시 래치
+    uint32_t line1_until = 0;
+    uint8_t  line1_mask  = 0;
+
+    // ★ PIR 표시 래치: 이 시각까지는 2행에 "PIR ALARM" 유지
+    uint32_t pir_display_until = 0;
+
+    for(;;){
+        const uint32_t now = ms_now();
+
+        // --- GAS (PA0) ---
+        uint16_t gas = 0;
+        HAL_ADC_Start(&hadc1);
+        if (HAL_ADC_PollForConversion(&hadc1, 5) == HAL_OK)
+            gas = (uint16_t)HAL_ADC_GetValue(&hadc1);
+        HAL_ADC_Stop(&hadc1);
+
+        // --- VIB/FLM (PB5/PB4) ---
+        const uint8_t vib_raw = (uint8_t)HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5);
+        const uint8_t flm_raw = (uint8_t)HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_4);
+        const uint8_t vib_det = (vib_raw == VIB_ACTIVE_LEVEL); // 1=감지
+        const uint8_t flm_det = (flm_raw == FLM_ACTIVE_LEVEL); // 1=감지
+
+        // --- PIR (PIR_Task 결과 사용) ---
+        const uint8_t pir_det = g_pir_detected ? 1 : 0;
+
+        // --- 2초 연속 감지 유지 ---
+        // GAS
+        if (gas >= GAS_THRESHOLD) {
+            if (!gas_hold) { if (!gas_t0) gas_t0 = now; if (now - gas_t0 >= SUSTAIN_MS) gas_hold = 1; }
+        } else { gas_t0 = 0; gas_hold = 0; }
+
+        // VIB
+        if (vib_det) {
+            if (!vib_hold) { if (!vib_t0) vib_t0 = now; if (now - vib_t0 >= SUSTAIN_MS) vib_hold = 1; }
+        } else { vib_t0 = 0; vib_hold = 0; }
+
+        // FLM
+        if (flm_det) {
+            if (!flm_hold) { if (!flm_t0) flm_t0 = now; if (now - flm_t0 >= SUSTAIN_MS) flm_hold = 1; }
+        } else { flm_t0 = 0; flm_hold = 0; }
+
+        // PIR
+        if (pir_det) {
+            if (!pir_hold) { if (!pir_t0) pir_t0 = now; if (now - pir_t0 >= SUSTAIN_PIR_MS) pir_hold = 1; }
+        } else { pir_t0 = 0; pir_hold = 0; }
+
+        // ★ PIR 표시 래치: hold 성립 시마다 30초로 연장
+        if (pir_hold) pir_display_until = now + ALARM_LATCH_MS;
+        const uint8_t pir_show = (now <= pir_display_until) ? 1U : 0U; // LCD 2행에 쓸 값
+
+        // ★ 1행 현재 마스크: 우선순위 없이 조합
+	    uint8_t curr_mask = 0;
+	    if (gas_hold) curr_mask |= 0x01; // GAS
+	    if (vib_hold) curr_mask |= 0x02; // VIB
+	    if (flm_hold) curr_mask |= 0x04; // FLM
+
+	    // ★ 1행 표시 래치: 현재 마스크가 있으면 즉시 교체 + 30초 연장,
+		// 없으면 만료 전까지 유지, 만료되면 Normal 복귀
+		if (curr_mask) {
+			line1_mask  = curr_mask;
+			line1_until = now + ALARM_LATCH_MS;
+		} else {
+			if (now > line1_until) line1_mask = 0;  // 30초 지나면 Normal
+		}
+
+        // --- LCD 메시지 구성 ---
+        // 1행은 가스/진동/플레임 중 우선순위로만 표시 (PIR은 2행 전용)
+        app_msg_t msg = {0};
+		msg.gas        = gas;
+		msg.vib        = vib_det;
+		msg.flm        = flm_det;
+		msg.pir        = pir_show;     // 2행: PIR ALARM/NONE
+		msg.line1_mask = line1_mask;   // 1행: ALARM:GAS/VIB/FLM 조합 (30초 래치)
+		msg.type       = (line1_mask ? EVT_GAS_ALARM : EVT_NONE); // (호환용, 안 써도 됨)
+
+        if      (gas_hold) msg.type = EVT_GAS_ALARM;
+        else if (vib_hold) msg.type = EVT_VIB_ALARM;
+        else if (flm_hold) msg.type = EVT_FLM_ALARM;
+        else               msg.type = EVT_NONE;
+
+        // --- LED/부저: 4개 중 어느 하나라도 hold면 ON, 30초 무감지면 OFF ---
+        const bool any_hold = (gas_hold || vib_hold || flm_hold || pir_hold);
+		if (any_hold) {
+			if (!outputs_on) { outputs_set(true); outputs_on = true; }
+			last_alarm_ms = now;
+		} else {
+			if (outputs_on && last_alarm_ms && (now - last_alarm_ms) >= ALARM_LATCH_MS) {
+				outputs_set(false);
+				outputs_on = false;
+				last_alarm_ms = 0;
+			}
+		}
+		/*
+		if (pir_hold == 1){
+			char sendBuf2[30];
+			char CamCommand[20] = "";
+			sprintf(sendBuf, "[%s]%s\n", "카메라모듈ID", CamCommand);
+			HAL_UART_Transmit(&huart6, (uint8_t *)sendBuf, strlen(sendBuf), 0xFFFF);
+		}
+		*/
+        osMessageQueuePut(g_lcdQueue, &msg, 0, 0);
+
+        char buf[140];
+
+        snprintf(buf, sizeof(buf),
+           "[%s] gas=%u gH=%u vib=%u vH=%u flm=%u fH=%u pirDet=%u pirH=%u pirShow=%u on=%d idle=%lu\r\n",
+           (msg.type==EVT_GAS_ALARM)?"ALARM:GAS":(msg.type==EVT_VIB_ALARM)?"ALARM:VIB":
+           (msg.type==EVT_FLM_ALARM)?"ALARM:FLM":"NORMAL",
+           gas, gas_hold, vib_det, vib_hold, flm_det, flm_hold, pir_det, pir_hold, pir_show,
+           (int)outputs_on, (unsigned long)(last_alarm_ms ? (now - last_alarm_ms) : 0));
+         /*
+         char sendBuf[30];
+         sprintf(sendBuf, "[%s]%u@%u\n", "KSH_SQL", gas, vib_det);
+         HAL_UART_Transmit(&huart6, (uint8_t *)sendBuf, strlen(sendBuf), 0xFFFF);
+         memset(sendBuf, 0, sizeof(sendBuf));
+		 sprintf(sendBuf, "[%s]SETDB@%s@%u,%u\n", "SQL", "sensor", gas, vib_det);
+		 HAL_UART_Transmit(&huart6, (uint8_t *)sendBuf, strlen(sendBuf), 0xFFFF);
+		 */
+         HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), HAL_MAX_DELAY);
+
+        osDelay(SAMPLE_PERIOD_MS);
+    }
+}

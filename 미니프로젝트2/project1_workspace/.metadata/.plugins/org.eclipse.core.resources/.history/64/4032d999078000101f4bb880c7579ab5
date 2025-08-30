@@ -1,0 +1,17 @@
+#include "rtc.h"
+
+
+void HAL_RTC_MspInit(RTC_HandleTypeDef* rtcHandle)
+{
+    if (rtcHandle->Instance == RTC) {
+        __HAL_RCC_RTC_ENABLE();
+        /* NVIC 사용 시 여기서 설정 가능 */
+    }
+}
+
+void HAL_RTC_MspDeInit(RTC_HandleTypeDef* rtcHandle)
+{
+    if (rtcHandle->Instance == RTC) {
+        __HAL_RCC_RTC_DISABLE();
+    }
+}

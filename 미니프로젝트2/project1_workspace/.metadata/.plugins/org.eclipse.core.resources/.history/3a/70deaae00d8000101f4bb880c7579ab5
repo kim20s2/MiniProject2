@@ -1,0 +1,27 @@
+#include "lcd.h"   // LCD 라이브러리 헤더 (I2C LCD1602용)
+
+void LCD_Task(void *argument)
+{
+    // LCD 초기화
+    LCD_Init();
+    LCD_Clear();
+
+    // 첫 번째 줄에 출력
+    LCD_SetCursor(0, 0);
+    LCD_Print("Hello, LCD!");
+
+    // 두 번째 줄에 출력
+    LCD_SetCursor(1, 0);
+    LCD_Print("STM32 + FreeRTOS");
+
+    for(;;) {
+        // 간단히 깜빡이면서 확인
+        LCD_SetCursor(0, 0);
+        LCD_Print("Line1: ON ");
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
+        LCD_SetCursor(0, 0);
+        LCD_Print("Line1: OFF");
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}

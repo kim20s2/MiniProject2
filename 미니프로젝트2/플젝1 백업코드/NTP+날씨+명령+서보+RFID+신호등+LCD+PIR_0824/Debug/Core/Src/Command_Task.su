@@ -1,0 +1,7 @@
+../Core/Inc/LED_FAN.h:21:20:LED_ON	8	static
+../Core/Inc/LED_FAN.h:22:20:LED_OFF	8	static
+../Core/Inc/LED_FAN.h:23:20:FAN_ON	8	static
+../Core/Inc/LED_FAN.h:24:20:FAN_OFF	8	static
+../Core/Src/Command_Task.c:25:6:esp_event	176	static
+../Core/Src/Command_Task.c:107:12:try_extract_ipd_payload	80	static
+../Core/Src/Command_Task.c:158:6:Command_Task	280	static

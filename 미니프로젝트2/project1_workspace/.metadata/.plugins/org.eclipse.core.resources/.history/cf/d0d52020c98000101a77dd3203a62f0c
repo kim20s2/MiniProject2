@@ -1,0 +1,50 @@
+#include "cmsis_os2.h"
+#include "stm32f4xx_hal.h"
+#include "LED_FAN.h"
+#include "PIR_Task.h"
+#include <stdbool.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include <stdio.h>
+
+void PIR_Task(void *argument)
+{
+    osDelay(30000);  // HC-SR501 워밍업
+
+    const uint32_t period = pdMS_TO_TICKS(50);   // 50ms 주기
+    uint32_t next_wake   = osKernelGetTickCount() + period;
+
+    uint32_t last_motion = 0;
+    uint8_t  hi_cnt = 0;
+    const uint8_t HI_THR = 2; // 100ms
+
+    for (;;)
+    {
+        // 입력 읽기 + 디바운스
+        if (HAL_GPIO_ReadPin(PIR_GPIO_Port, PIR_Pin) == GPIO_PIN_SET) {
+            if (hi_cnt < 255) hi_cnt++;
+        } else {
+            hi_cnt = 0;
+        }
+
+        // 감지되면: 매번 강제로 켜기 + 타이머 연장
+        if (hi_cnt >= HI_THR) {
+            last_motion = osKernelGetTickCount();
+            // 로그가 필요하면 여기서 출력
+            printf("Sensing Something\r\n");
+            LED_ON();
+            FAN_ON();
+        }
+
+        // 타임아웃(여기선 10초) 동안 추가 감지 없으면 OFF
+        if (last_motion != 0 &&
+            (osKernelGetTickCount() - last_motion) >= pdMS_TO_TICKS(10000)) {
+            FAN_OFF();
+            LED_OFF();
+            last_motion = 0;
+        }
+
+        osDelayUntil(next_wake);
+        next_wake += period;
+    }
+}

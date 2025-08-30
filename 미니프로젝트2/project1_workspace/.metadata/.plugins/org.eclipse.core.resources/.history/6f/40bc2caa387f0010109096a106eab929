@@ -1,0 +1,77 @@
+#include "lcd_i2c.h"
+#include <stdio.h>
+#include <string.h>
+
+static I2C_HandleTypeDef *s_hi2c;
+static uint8_t s_backlight = 0x08; // 백라이트 ON
+
+// PCF8574 핀 맵: P0=D4, P1=D5, P2=D6, P3=D7, P4=BL, P5=EN, P6=RW, P7=RS (보드마다 다를 수 있지만 이 조합이 가장 흔함)
+#define EN 0x04
+#define RW 0x02
+#define RS 0x01
+
+static void i2c_write(uint8_t data) {
+    HAL_I2C_Master_Transmit(s_hi2c, LCD_I2C_ADDR, &data, 1, 10);
+}
+
+static void lcd_strobe(uint8_t data) {
+    i2c_write(data | EN | s_backlight);
+    HAL_Delay(1);
+    i2c_write((data & ~EN) | s_backlight);
+    HAL_Delay(1);
+}
+
+static void lcd_write4(uint8_t nibble, uint8_t mode) { // mode: RS
+    uint8_t data = (nibble & 0xF0) | s_backlight | mode;
+    i2c_write(data);
+    lcd_strobe(data);
+}
+
+static void lcd_cmd(uint8_t cmd) {
+    lcd_write4(cmd & 0xF0, 0x00);
+    lcd_write4((cmd<<4) & 0xF0, 0x00);
+}
+
+static void lcd_dat(uint8_t c) {
+    lcd_write4(c & 0xF0, RS);
+    lcd_write4((c<<4) & 0xF0, RS);
+}
+
+void lcd_init(I2C_HandleTypeDef *hi2c) {
+    s_hi2c = hi2c;
+    HAL_Delay(50);
+
+    // 4-bit 진입 시퀀스
+    i2c_write(0x30 | s_backlight); lcd_strobe(0x30 | s_backlight); HAL_Delay(5);
+    i2c_write(0x30 | s_backlight); lcd_strobe(0x30 | s_backlight); HAL_Delay(5);
+    i2c_write(0x20 | s_backlight); lcd_strobe(0x20 | s_backlight); HAL_Delay(5);
+
+    // 기능 설정: 2라인, 5x8 폰트
+    lcd_cmd(0x28);
+    // 표시 ON, 커서/블링크 OFF
+    lcd_cmd(0x0C);
+    // 엔트리모드: 증가, 쉬프트 안함
+    lcd_cmd(0x06);
+    lcd_clear();
+}
+
+void lcd_clear(void) { lcd_cmd(0x01); HAL_Delay(2); }
+void lcd_home(void)  { lcd_cmd(0x02); HAL_Delay(2); }
+
+void lcd_goto(uint8_t row, uint8_t col) {
+    uint8_t addr = (row == 0 ? 0x00 : 0x40) + (col & 0x0F);
+    lcd_cmd(0x80 | addr);
+}
+
+void lcd_write(const char *s) {
+    while (*s) lcd_dat((uint8_t)*s++);
+}
+
+void lcd_printf(const char *fmt, ...) {
+    char buf[32];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    lcd_write(buf);
+}

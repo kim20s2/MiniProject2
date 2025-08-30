@@ -1,0 +1,28 @@
+// servo.c
+#include "servo.h"
+#include "tim.h"
+
+// 1 MHz(1us) 타이머 기준
+#define SERVO_MIN_US   500    // 0°
+#define SERVO_MID_US   1500   // 90°
+#define SERVO_MAX_US   2500   // 180°
+
+void Servo_Init(void)
+{
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+
+    // 고급 타이머(TIM1/8)에서 출력이 안 나오면 MOE를 켜야 할 수 있음
+    // (대부분 HAL_TIM_PWM_Start로 충분하지만, 안 나오면 아래 한 줄 추가)
+    __HAL_TIM_MOE_ENABLE(&htim1);
+
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, SERVO_MIN_US); // 초기 0°
+}
+
+void Servo_SetAngle(int angle)
+{
+    if (angle < 0) angle = 0;
+    if (angle > 180) angle = 180;
+
+    uint32_t pulse = SERVO_MIN_US + (angle * (SERVO_MAX_US - SERVO_MIN_US) / 180);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, pulse);
+}

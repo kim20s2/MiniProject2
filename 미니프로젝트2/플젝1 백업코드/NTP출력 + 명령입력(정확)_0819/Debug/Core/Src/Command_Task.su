@@ -1,0 +1,3 @@
+../Core/Src/Command_Task.c:33:6:esp_event	176	static
+../Core/Src/Command_Task.c:101:12:try_extract_ipd_payload	72	static
+../Core/Src/Command_Task.c:151:6:Command_Task	280	static

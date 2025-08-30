@@ -1,0 +1,210 @@
+/*
+ * Command_Task.c
+ *
+ *  Created on: Aug 19, 2025
+ *      Author: kim20
+ */
+
+// =============================
+// command_task.c
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include "esp.h"
+#include "main.h"
+#include "Servo.h"
+#include "LED_FAN.h"
+#include "FanHold.h"
+
+extern osMutexId_t ESP_MutexHandle;
+extern cb_data_t cb_data;
+void esp_event(const char *recvBuf);
+
+void esp_event(const char *recvBuf)
+{
+	char strBuff[128];
+	char *pArray[8] = {0};
+	int idx = 0;
+
+	if (!recvBuf) return;
+
+	// 1) 복사 + 안전 종료
+	strncpy(strBuff, recvBuf, sizeof(strBuff)-1);
+	strBuff[sizeof(strBuff)-1] = '\0';
+
+	// 2) 개행 제거
+	for (char *p=strBuff; *p; ++p) {
+		if (*p=='\r' || *p=='\n') { *p = '\0'; break; }
+	}
+
+	// 3) 대괄호 prefix 무시: 마지막 ']' 뒤부터 payload
+	char *payload = strBuff;
+	char *rb = strrchr(strBuff, ']');
+	if (rb && *(rb+1) != '\0') payload = rb + 1;
+
+	// 공백 트림
+	while (*payload==' '||*payload=='\t') payload++;
+
+	// 4) 토큰화: [] @ 공백/탭 모두 구분자
+	char *tok = strtok(payload, "[]@ \t");
+	while (tok && idx < (int)(sizeof(pArray)/sizeof(pArray[0]))) {
+		pArray[idx++] = tok;
+		tok = strtok(NULL, "[]@ \t");
+	}
+	if (idx < 2) {
+		printf("Invalid command: %s\r\n", recvBuf);
+		return;
+	}
+
+	// 5) 마지막 두 토큰을 device/action으로
+	const char *device = pArray[idx - 2];
+	const char *action = pArray[idx - 1];
+
+	// 6) 대문자 정규화
+	char devU[16]={0}, actU[16]={0};
+	strncpy(devU, device, sizeof(devU)-1);
+	strncpy(actU, action, sizeof(actU)-1);
+	for (char *p=devU; *p; ++p) if ('a'<=*p && *p<='z') *p -= 32;
+	for (char *p=actU; *p; ++p) if ('a'<=*p && *p<='z') *p -= 32;
+
+	// 7) 액션 판정 (ON/OFF/1/0)
+	int want_on  = (!strcmp(actU,"ON")  || !strcmp(actU,"1"));
+	int want_off = (!strcmp(actU,"OFF") || !strcmp(actU,"0"));
+
+	// 8) 디바이스 스위치
+	if (!strcmp(devU, "LED") || !strcmp(devU, "LEDA")) {     // LED/LEDA = ALL
+		if (want_on)       { LED1_ON(); LED2_ON();  printf("ALL LED ON\r\n"); }
+		else if (want_off) { LED1_OFF(); LED2_OFF(); printf("ALL LED OFF\r\n"); }
+		else printf("Unknown action: %s\r\n", action);
+	}
+	else if (!strcmp(devU, "LED1")) {
+		if (want_on)       { LED1_ON();  printf("LED1 ON\r\n"); }
+		else if (want_off) { LED1_OFF(); printf("LED1 OFF\r\n"); }
+		else printf("Unknown action: %s\r\n", action);
+	}
+	else if (!strcmp(devU, "LED2")) {
+		if (want_on)       { LED2_ON();  printf("LED2 ON\r\n"); }
+		else if (want_off) { LED2_OFF(); printf("LED2 OFF\r\n"); }
+		else printf("Unknown action: %s\r\n", action);
+	}
+	else if (!strcmp(devU, "FAN")) {
+		if (want_on)       { fan_hold = 1; FAN_ON();  printf("FAN ON\r\n"); }
+		else if (want_off) { fan_hold = 0; FAN_OFF(); printf("FAN OFF\r\n"); }
+		else printf("Unknown action: %s\r\n", action);
+	}
+	else if (!strcmp(devU, "SERVO")) {
+		if (want_on)       { Servo_SetAngle(90);  printf("SERVO -> 90 deg\r\n"); }
+		else if (want_off) { Servo_SetAngle(0);   printf("SERVO -> 0 deg\r\n"); }
+		else printf("Unknown action: %s\r\n", action);
+	}
+	else {
+		printf("Unknown device: %s\r\n", device);
+	}
+}
+
+// +IPD,<len>:...   (CIPMUX=0)
+// +IPD,<id>,<len>:...  (CIPMUX=1)
+// +IPD 모드 + RAW 라인 모드 겸용
+static int try_extract_ipd_payload(char *dst, int dst_sz)
+{
+    int copied = 0, consumed = 0;
+
+    taskENTER_CRITICAL();
+    int n = cb_data.length;
+    if (n > 0) {
+        int start = -1;
+
+        // ── (A) ESP-AT +IPD 포맷 먼저 시도 ──
+        for (int i = 0; i + 4 < n; ++i) {
+            if (cb_data.buf[i]=='+' && cb_data.buf[i+1]=='I' && cb_data.buf[i+2]=='P' &&
+                cb_data.buf[i+3]=='D' && cb_data.buf[i+4]==',') { start = i; break; }
+        }
+        if (start >= 0) {
+            int p = start + 5;
+
+            // optional link id
+            int q = p;
+            while (q < n && cb_data.buf[q]>='0' && cb_data.buf[q]<='9') q++;
+            if (q < n && cb_data.buf[q] == ',') {
+                p = q + 1; // had link id -> p now at len
+            }
+
+            // parse length until ':'
+            int len_start = p, colon = -1;
+            for (int i = len_start; i < n && i < len_start + 10; ++i) {
+                if (cb_data.buf[i] == ':') { colon = i; break; }
+                if (cb_data.buf[i] < '0' || cb_data.buf[i] > '9') { len_start = -1; break; }
+            }
+            if (len_start >= 0 && colon > 0) {
+                int ipd_len = atoi((const char*)&cb_data.buf[len_start]);
+                int payload_start = colon + 1;
+                int bytes_avail = n - payload_start;
+                if (ipd_len > 0 && bytes_avail >= ipd_len) {
+                    int cpy = (ipd_len < (dst_sz-1)) ? ipd_len : (dst_sz-1);
+                    memcpy(dst, &cb_data.buf[payload_start], cpy);
+                    dst[cpy] = 0;
+                    copied = cpy;
+                    consumed = payload_start + ipd_len;
+                }
+            }
+        }
+
+        // ── (B) RAW 라인 모드 (블루투스/직렬) ──
+        if (copied == 0) {
+            int eol = -1;
+            for (int i = 0; i < n; ++i) {
+                if (cb_data.buf[i] == '\n' || cb_data.buf[i] == '\r') { eol = i; break; }
+            }
+            if (eol >= 0) {
+                int cpy = (eol < (dst_sz-1)) ? eol : (dst_sz-1);
+                memcpy(dst, cb_data.buf, cpy);
+                dst[cpy] = 0;
+                copied = cpy;
+                // \r\n 콤보 스킵
+                consumed = eol + 1;
+                if (consumed < n && (cb_data.buf[consumed] == '\n' || cb_data.buf[consumed] == '\r'))
+                    consumed++;
+            }
+            // (선택) 너무 길어도 줄바꿈이 없다면, 버퍼가 꽉 찼을 때만 강제 배출
+            else if (n >= (dst_sz - 1)) {
+                int cpy = dst_sz - 1;
+                memcpy(dst, cb_data.buf, cpy);
+                dst[cpy] = 0;
+                copied = cpy;
+                consumed = cpy;
+            }
+        }
+
+        // 소비한 만큼 앞으로 당김
+        if (consumed > 0) {
+            int left = n - consumed;
+            if (left > 0) memmove(cb_data.buf, &cb_data.buf[consumed], left);
+            cb_data.length = left;
+        }
+    }
+    taskEXIT_CRITICAL();
+    return copied;
+}
+
+
+void Command_Task(void *argument)
+{
+    char payload[256];
+    for(;;)
+    {
+		if (osMutexAcquire(ESP_MutexHandle, 0) == osOK) {
+			int got = try_extract_ipd_payload(payload, sizeof(payload));
+			osMutexRelease(ESP_MutexHandle);
+			if (got > 0) {
+				// strip CR/LF
+				payload[strcspn(payload, "\r\n")] = '\0';
+				printf("[CMD] RX:[%s]\r\n", payload);   // ★ 여기에 추가
+				esp_event(payload);
+			}
+		}
+        // UART2 console (already in your code) can stay elsewhere
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}

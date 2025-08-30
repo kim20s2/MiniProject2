@@ -1,0 +1,51 @@
+#include "PIR_Task.h"
+#include "LED_FAN.h"
+#include <stdbool.h>
+
+// ── 내부 타이머 공유 상태 ──
+static volatile uint32_t s_last_motion = 0;      // "마지막 감지/ARM 시각"
+static inline uint32_t MS2T(uint32_t ms){ return (uint32_t)((((uint64_t)ms)*osKernelGetTickFreq())/1000U); }
+
+// 외부에서 호출: 지금 시각으로 타이머를 ARM
+void PIR_ArmIdleTimer(void) {
+    s_last_motion = osKernelGetTickCount();      // 10초 후 무감지면 OFF
+}
+
+void PIR_Task(void *argument)
+{
+    osDelay(30000);  // HC-SR501 워밍업
+
+    const uint32_t period = MS2T(50);   // 50ms
+    uint32_t next_wake   = osKernelGetTickCount() + period;
+
+    uint8_t  hi_cnt = 0;
+    const uint8_t HI_THR = 2;           // 100ms
+    const uint32_t OFF_WINDOW = MS2T(10000);  // 무감지 10초면 OFF
+
+    for(;;){
+        // 감지 디바운싱
+        if (HAL_GPIO_ReadPin(PIR_GPIO_Port, PIR_Pin) == GPIO_PIN_SET) {
+            if (hi_cnt < 255) hi_cnt++;
+        } else {
+            hi_cnt = 0;
+        }
+
+        // 감지되면: 항상 켠다 + 타이머 연장
+        if (hi_cnt >= HI_THR) {
+            LED_ON();
+            FAN_ON();
+            s_last_motion = osKernelGetTickCount();
+        }
+
+        // 무감지 10초 경과 시 OFF (RFID로 켰든 뭐로 켰든 동일하게 적용)
+        if (s_last_motion != 0 &&
+            (osKernelGetTickCount() - s_last_motion) >= OFF_WINDOW) {
+            FAN_OFF();
+            LED_OFF();
+            s_last_motion = 0;  // 다시 대기
+        }
+
+        osDelayUntil(next_wake);
+        next_wake += period;
+    }
+}

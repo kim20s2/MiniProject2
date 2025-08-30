@@ -1,0 +1,88 @@
+// Core/Src/Schedule.c
+#include "cmsis_os.h"
+#include "cmsis_os2.h"
+#include "Schedule.h"
+#include "LED_FAN.h"
+#include <time.h>
+#include <stdio.h>
+#include "FanHold.h"
+
+static schedule_t g_sched;
+extern osMutexId_t NTP_MutexHandle;
+extern time_t ntp_time;
+
+void Schedule_Init(void){
+    g_sched.enabled = 0;
+    g_sched.hh = 0;
+    g_sched.mm = 0;
+}
+
+void Schedule_Set(uint8_t hh, uint8_t mm){
+    g_sched.hh = hh;
+    g_sched.mm = mm;
+    g_sched.enabled = 1;
+    printf("[SCHED] today %02u:%02u 예약 등록\r\n", hh, mm);
+}
+
+void Schedule_Clear(void){
+    g_sched.enabled = 0;
+    printf("[SCHED] 예약 해제\r\n");
+}
+
+void Schedule_Task(void *argument)
+{
+    // LCD와 동일한 now 계산: NTP 동기화 시각을 기준 에포크로 잡고, 경과 tick으로 초를 누적
+    static time_t     base_epoch = 0;
+    static TickType_t base_tick  = 0;
+    static int        have_base  = 0;
+
+    for(;;){
+        // 1) ntp_time 갱신되면 기준 에포크/틱 업데이트
+        if (osMutexAcquire(NTP_MutexHandle, pdMS_TO_TICKS(10)) == osOK) {
+            static time_t last_ntp = 0;
+            if (ntp_time != 0 && ntp_time != last_ntp) {
+                base_epoch = ntp_time;
+                base_tick  = xTaskGetTickCount();
+                have_base  = 1;
+                last_ntp   = ntp_time;
+            }
+            osMutexRelease(NTP_MutexHandle);
+        }
+
+        // 2) 현재 시각(now_epoch) 계산: (NTP 기반) 또는 초기엔 time(NULL)로 폴백
+        time_t now_epoch;
+        if (have_base) {
+            TickType_t now_tick = xTaskGetTickCount();
+            uint32_t hz = osKernelGetTickFreq();
+            now_epoch = base_epoch + (time_t)((now_tick - base_tick) / hz);
+        } else {
+            now_epoch = time(NULL);
+        }
+
+        // 3) 예약 비교 및 실행 (시·분이 같으면 1회 실행 후 자동 해제)
+        if (g_sched.enabled) {
+            struct tm *k = localtime(&now_epoch);
+            if (k) {
+                if ((uint8_t)k->tm_hour == g_sched.hh &&
+                    (uint8_t)k->tm_min  == g_sched.mm) {
+
+                    printf("[SCHED] 예약 실행 %02u:%02u now=%02d:%02d:%02d\r\n",
+                           g_sched.hh, g_sched.mm, k->tm_hour, k->tm_min, k->tm_sec);
+
+                    // FAN이 즉시 꺼지지 않도록 hold 먼저 켜고 구동
+                    fan_hold = 1;
+                    LED1_ON();
+                    LED2_ON();
+                    FAN_ON();
+
+                    printf("[SCHED] LED1, LED2, FAN ON 완료\r\n");
+                    g_sched.enabled = 0;   // 1회성 실행 후 자동 해제
+                }
+            }
+        }
+
+        // 4) 주기
+        osDelay(1000);  // 1초 주기로 확인하면 트리거 놓칠 일이 없음
+    }
+}
+

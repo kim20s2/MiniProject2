@@ -1,0 +1,78 @@
+// Core/Src/PIR_Task.c
+#include "cmsis_os2.h"
+#include "stm32f4xx_hal.h"
+#include "LED_FAN.h"
+#include "PIR_Task.h"
+#include "FanHold.h"     // fan_hold 쓰면 포함
+#include <stdbool.h>
+#include <stdint.h>
+
+// ── 보조: ms→tick (CMSIS v2) ──
+static inline uint32_t MS2T(uint32_t ms){
+    return (uint32_t)((((uint64_t)ms) * osKernelGetTickFreq()) / 1000U);
+}
+
+// ── 무감지 타이머 공유 상태 ──
+static volatile uint32_t s_last_motion = 0;  // 마지막 감지/ARM 시각
+
+// 외부에서 RFID로 켠 직후 타이머 ARM하고 싶을 때 호출
+void PIR_ArmIdleTimer(void){
+    s_last_motion = osKernelGetTickCount();
+}
+
+void PIR_Task(void *argument)
+{
+    osDelay(30000);  // HC-SR501 워밍업
+
+    const uint32_t period     = MS2T(50);        // 50 ms 폴링
+    const uint32_t OFF_WINDOW = MS2T(10000);     // 무감지 10초면 OFF
+    uint32_t next_wake = osKernelGetTickCount() + period;
+
+    uint8_t  hi_cnt = 0, lo_cnt = 0;
+    const uint8_t HI_THR = 2;   // 100ms 이상 High면 감지
+    const uint8_t LO_THR = 2;   // 100ms 이상 Low면 해제
+    bool high_blocked = false;  // 상승 에지 1회만 처리
+
+    for (;;)
+    {
+        uint32_t now = osKernelGetTickCount();
+        GPIO_PinState s = HAL_GPIO_ReadPin(PIR_GPIO_Port, PIR_Pin);
+
+        if (s == GPIO_PIN_SET) {
+            if (hi_cnt < 255) hi_cnt++;
+            lo_cnt = 0;
+
+            // HIGH 구간 동안 타이머 연장
+            s_last_motion = now;
+
+            // 상승 에지 1회만 처리 (로그/ON)
+            if (!high_blocked && hi_cnt >= HI_THR) {
+                printf("Sensing Something\r\n");
+                LED_ON();
+                fan_hold = 1;    // 쓰는 정책이면 유지, 필요 없으면 삭제
+                FAN_ON();
+                high_blocked = true;
+            }
+        } else {
+            if (lo_cnt < 255) lo_cnt++;
+            hi_cnt = 0;
+
+            // 충분히 LOW 유지되면 다음 HIGH를 다시 처리하게 풀어줌
+            if (high_blocked && lo_cnt >= LO_THR) {
+                high_blocked = false;
+            }
+        }
+
+        // 무감지 10초 경과 시 OFF (RFID로 켰든 동일 적용)
+        if (s_last_motion != 0 && (now - s_last_motion) >= OFF_WINDOW) {
+            fan_hold = 0;     // 정책상 해제 원치 않으면 제거
+            printf("Sensing Nothing\r\n");
+            FAN_OFF();
+            LED_OFF();
+            s_last_motion = 0;
+        }
+
+        osDelayUntil(next_wake);   // CMSIS v2: 절대 tick 1개만 인자
+        next_wake += period;
+    }
+}

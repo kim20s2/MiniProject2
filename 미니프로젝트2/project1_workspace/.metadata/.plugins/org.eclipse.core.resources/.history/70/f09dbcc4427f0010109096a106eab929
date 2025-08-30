@@ -1,0 +1,120 @@
+// =============================
+// Servo_Task.c
+// =============================
+#include "cmsis_os.h"
+#include "main.h"
+#include <math.h>
+#include <stdio.h>
+
+// TIM1 핸들 및 WEATHER 공유 변수
+extern TIM_HandleTypeDef htim1;
+extern osMutexId_t Weather_MutexHandle;
+extern volatile int   g_pty;   // 0=없음, 1~7=강수
+
+// --- 각도/펄스 설정 ----------------------------
+#define SERVO_MIN_US      1000   // 0도 ≈ 1.0ms
+#define SERVO_MAX_US      2000   // 180도 ≈ 2.0ms
+#define SERVO_MIN_DEG     0.0f
+#define SERVO_MAX_DEG     180.0f
+
+#define SERVO_ANGLE_DRY    0.0f   // 비/눈 없음
+#define SERVO_ANGLE_WET   90.0f   // 비/눈 있음
+
+// --- 버튼(NUCLEO B1: PC13) --------------------
+#define USER_BTN_PORT     GPIOC
+#define USER_BTN_PIN      GPIO_PIN_13
+// Nucleo 보드는 풀업, 눌렀을 때 Low가 일반적
+#define BTN_PRESSED()     (HAL_GPIO_ReadPin(USER_BTN_PORT, USER_BTN_PIN) == GPIO_PIN_RESET)
+
+// --- 오버라이드(버튼/명령으로 강제) ------------
+static volatile int s_override = -1; // -1:자동, 0:DRY, 1:WET
+
+// --- 유틸 -------------------------------------
+static inline uint16_t clamp_u16(int v, int lo, int hi) {
+    if (v < lo) return (uint16_t)lo;
+    if (v > hi) return (uint16_t)hi;
+    return (uint16_t)v;
+}
+
+// 1us 타이머(PSC=83, ARR=19999 가정): CCR=us
+static void servo_set_pulse_us(uint16_t us) {
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, us);
+}
+
+// 0~180도 → 1000~2000us
+void Servo_set_angle(float deg) {
+    if (deg < SERVO_MIN_DEG) deg = SERVO_MIN_DEG;
+    if (deg > SERVO_MAX_DEG) deg = SERVO_MAX_DEG;
+    float ratio = (deg - SERVO_MIN_DEG) / (SERVO_MAX_DEG - SERVO_MIN_DEG);
+    int pulse = (int)roundf(SERVO_MIN_US + ratio * (SERVO_MAX_US - SERVO_MIN_US));
+    servo_set_pulse_us(clamp_u16(pulse, SERVO_MIN_US, SERVO_MAX_US));
+}
+
+static inline int is_precip_now(void) {
+    // ★ 버튼/명령으로 강제한 상태가 있으면 그걸 사용
+    int ov = s_override;
+    if (ov >= 0) return ov;
+
+    int p = -1;
+    if (osMutexAcquire(Weather_MutexHandle, pdMS_TO_TICKS(50)) == osOK) {
+        p = g_pty;
+        osMutexRelease(Weather_MutexHandle);
+    }
+    return (p > 0); // 0=없음, 1~7=강수
+}
+
+static void apply_servo_by_wet(int wet) {
+    float target = wet ? SERVO_ANGLE_WET : SERVO_ANGLE_DRY;
+    Servo_set_angle(target);
+    printf("[SERVO] %s -> angle=%.1f\r\n", wet ? "WET" : "DRY", target);
+}
+
+// 버튼 토글: DRY <-> WET (자동 모드 해제)
+static void button_toggle_override(void) {
+    if (s_override < 0) {
+        // 자동에서 누르면 현재 상태의 반대로 강제
+        int now = is_precip_now();
+        s_override = now ? 0 : 1;
+    } else {
+        // 강제 중이면 DRY<->WET 토글
+        s_override = (s_override == 0) ? 1 : 0;
+    }
+    apply_servo_by_wet(s_override);
+    printf("[SERVO] override=%d (-1:auto,0:dry,1:wet)\r\n", s_override);
+}
+
+void Servo_Task(void *argument)
+{
+    // 시작 위치(현재 날씨/오버라이드 기준)
+    int wet = is_precip_now();
+    apply_servo_by_wet(wet);
+
+    // 버튼 디바운스용
+    uint8_t last = BTN_PRESSED() ? 1 : 0;
+    TickType_t lastEdge = 0;
+
+    for (;;) {
+        // 1) 버튼 에지 감지(폴링 방식, 10ms)
+        uint8_t now = BTN_PRESSED() ? 1 : 0;
+        TickType_t tick = xTaskGetTickCount();
+        if (last == 0 && now == 1) { // 하이->로우(또는 설정에 맞게 조정)
+            // 디바운스 150ms
+            if ((tick - lastEdge) > pdMS_TO_TICKS(150)) {
+                button_toggle_override();
+                lastEdge = tick;
+            }
+        }
+        last = now;
+
+        // 2) 자동 모드일 때만 날씨 변화 반영
+        if (s_override < 0) {
+            int w = is_precip_now(); // 내부에서 override 검사하므로 -1이면 날씨
+            if (w != wet) {
+                wet = w;
+                apply_servo_by_wet(wet);
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}

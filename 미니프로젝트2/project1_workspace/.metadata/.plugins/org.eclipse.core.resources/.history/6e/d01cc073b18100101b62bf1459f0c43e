@@ -1,0 +1,195 @@
+/*
+ * Command_Task.c
+ *
+ *  Created on: Aug 19, 2025
+ *      Author: kim20
+ */
+
+// =============================
+// command_task.c
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include "esp.h"
+#include "main.h"
+#include "Servo.h"
+#include "LED_FAN.h"
+#include "FanHold.h"
+
+extern osMutexId_t ESP_MutexHandle;
+extern cb_data_t cb_data;
+void esp_event(const char *recvBuf);
+
+void esp_event(const char *recvBuf)
+{
+    char strBuff[128];
+    char *pArray[4] = {0,};
+
+    // 1) 문자열 복사 (안전하게 처리)
+    strncpy(strBuff, recvBuf, sizeof(strBuff)-1);
+    strBuff[sizeof(strBuff)-1] = '\0';
+
+    // 2) 개행문자 제거
+    char *newline = strchr(strBuff, '\n');
+    if (newline) *newline = '\0';
+    newline = strchr(strBuff, '\r');
+    if (newline) *newline = '\0';
+
+    // 3) 파싱 (구분자 @, 공백, [, ] 처리)
+    int idx = 0;
+    char *token = strtok(strBuff, "[]@ ");
+    while (token != NULL && idx < 4)
+    {
+        pArray[idx++] = token;
+        token = strtok(NULL, "[]@ ");
+    }
+
+    // 디버깅 출력
+    /*
+    printf("Parsed: pArray[0]=%s, pArray[1]=%s, pArray[2]=%s\r\n",
+           pArray[0] ? pArray[0] : "NULL",
+           pArray[1] ? pArray[1] : "NULL",
+           pArray[2] ? pArray[2] : "NULL");
+    */
+    // 4) 명령 실행
+    if (pArray[1] && pArray[2])
+    {
+        if (strcmp(pArray[1], "LED1") == 0)
+        {
+            if (strcmp(pArray[2], "ON") == 0) {
+                LED1_ON();
+                printf("LED1 turned ON\r\n");
+            }
+            else if (strcmp(pArray[2], "OFF") == 0) {
+                LED1_OFF();
+                printf("LED1 turned OFF\r\n");
+            }
+        }
+        if (strcmp(pArray[1], "LED2") == 0)
+        {
+            if (strcmp(pArray[2], "ON") == 0) {
+                LED2_ON();
+                printf("LED2 turned ON\r\n");
+            }
+            else if (strcmp(pArray[2], "OFF") == 0) {
+                LED2_OFF();
+                printf("LED2 turned OFF\r\n");
+            }
+        }
+        else if (strcmp(pArray[1], "FAN") == 0)
+        {
+            if (strcmp(pArray[2], "ON") == 0) {
+            	fan_hold = 1;
+                FAN_ON();
+                printf("FAN turned ON\r\n");
+            }
+            else if (strcmp(pArray[2], "OFF") == 0) {
+            	fan_hold = 0;
+                FAN_OFF();
+                printf("FAN turned OFF\r\n");
+            }
+        }
+        else if (strcmp(pArray[1], "ALL") == 0)
+        {
+            else if (strcmp(pArray[2], "OFF") == 0) {
+            	LED1_OFF();
+            	LED2_OFF();
+                FAN_OFF();
+                printf("Turned OFF ALL\r\n");
+            }
+        }
+        else if (strcmp(pArray[1], "SERVO") == 0)   // ★ 추가
+        {
+            if (strcmp(pArray[2], "ON") == 0) {
+                Servo_SetAngle(90);  // 90도
+                printf("SERVO -> 90 deg\r\n");
+            }
+            else if (strcmp(pArray[2], "OFF") == 0) {
+                Servo_SetAngle(0);   // 0도
+                printf("SERVO -> 0 deg\r\n");
+            }
+        }
+        else
+        {
+            printf("Unknown device: %s\r\n", pArray[1]);
+        }
+    }
+    else
+    {
+        printf("Invalid command format: %s\r\n", recvBuf);
+    }
+}
+
+// +IPD,<len>:...   (CIPMUX=0)
+// +IPD,<id>,<len>:...  (CIPMUX=1)
+static int try_extract_ipd_payload(char *dst, int dst_sz)
+{
+    int copied = 0, consumed = 0;
+
+    taskENTER_CRITICAL();
+    int n = cb_data.length;
+    if (n > 0) {
+        int start = -1;
+        for (int i = 0; i + 4 < n; ++i) {
+            if (cb_data.buf[i]=='+' && cb_data.buf[i+1]=='I' && cb_data.buf[i+2]=='P' &&
+                cb_data.buf[i+3]=='D' && cb_data.buf[i+4]==',') { start = i; break; }
+        }
+        if (start >= 0) {
+            int p = start + 5;
+
+            // (1) optional link id
+            int q = p;
+            while (q < n && cb_data.buf[q]>='0' && cb_data.buf[q]<='9') q++;
+            if (q < n && cb_data.buf[q] == ',') {
+                p = q + 1; // had link id -> p now at len
+            } // else: single mode, p already at len
+
+            // (2) parse length until ':'
+            int len_start = p, colon = -1;
+            for (int i = len_start; i < n && i < len_start + 10; ++i) {
+                if (cb_data.buf[i] == ':') { colon = i; break; }
+                if (cb_data.buf[i] < '0' || cb_data.buf[i] > '9') { len_start = -1; break; }
+            }
+            if (len_start >= 0 && colon > 0) {
+                int ipd_len = atoi((const char*)&cb_data.buf[len_start]);
+                int payload_start = colon + 1;
+                int bytes_avail = n - payload_start;
+                if (ipd_len > 0 && bytes_avail >= ipd_len) {
+                    int cpy = (ipd_len < (dst_sz-1)) ? ipd_len : (dst_sz-1);
+                    memcpy(dst, &cb_data.buf[payload_start], cpy);
+                    dst[cpy] = 0;
+                    copied = cpy;
+                    consumed = payload_start + ipd_len;
+                }
+            }
+        }
+        if (consumed > 0) {
+            int left = n - consumed;
+            if (left > 0) memmove(cb_data.buf, &cb_data.buf[consumed], left);
+            cb_data.length = left;
+        }
+    }
+    taskEXIT_CRITICAL();
+    return copied;
+}
+
+void Command_Task(void *argument)
+{
+    char payload[256];
+    for(;;)
+    {
+		if (osMutexAcquire(ESP_MutexHandle, 0) == osOK) {
+			int got = try_extract_ipd_payload(payload, sizeof(payload));
+			osMutexRelease(ESP_MutexHandle);
+			if (got > 0) {
+				// strip CR/LF
+				payload[strcspn(payload, "\r\n")] = '\0';
+				esp_event(payload);
+			}
+		}
+        // UART2 console (already in your code) can stay elsewhere
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}

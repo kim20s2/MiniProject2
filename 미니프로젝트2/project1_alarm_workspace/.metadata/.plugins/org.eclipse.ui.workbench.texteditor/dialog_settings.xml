@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section name="Workbench">
+	<item key="hasShownOverlayPopupBefore" value="true"/>
+	<item key="replaceBarOpen" value="false"/>
+	<list key="searchhistory">
+		<item value="uart2"/>
+		<item value="huart2"/>
+		<item value="vH="/>
+		<item value="SUSTAIN_MS"/>
+		<item value="sustain_ms"/>
+		<item value="ms_now"/>
+		<item value="led"/>
+		<item value="g_pir_detected"/>
+		<item value="ir"/>
+		<item value="pir_task"/>
+		<item value="LED_ON_LVL"/>
+		<item value="outputs_set"/>
+		<item value="led_on"/>
+		<item value="t="/>
+		<item value="TIM"/>
+	</list>
+</section>

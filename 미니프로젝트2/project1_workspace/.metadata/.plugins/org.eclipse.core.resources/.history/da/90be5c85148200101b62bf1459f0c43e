@@ -1,0 +1,92 @@
+// Core/Src/Schedule.c
+#include "cmsis_os.h"
+#include "cmsis_os2.h"
+#include "Schedule.h"
+#include "LED_FAN.h"
+#include <time.h>
+#include <stdio.h>
+#include "FanHold.h"
+#include "rtc.h"
+extern RTC_HandleTypeDef hrtc;
+
+
+static schedule_t g_sched;
+extern osMutexId_t NTP_MutexHandle;
+extern time_t ntp_time;
+
+void Schedule_Init(void){
+    g_sched.enabled = 0;
+    g_sched.hh = 0;
+    g_sched.mm = 0;
+}
+
+void Schedule_Set(uint8_t hh, uint8_t mm){
+    g_sched.hh = hh;
+    g_sched.mm = mm;
+    g_sched.enabled = 1;
+    printf("[SCHED] today %02u:%02u 예약 등록\r\n", hh, mm);
+}
+
+void Schedule_Clear(void){
+    g_sched.enabled = 0;
+    printf("[SCHED] 예약 해제\r\n");
+}
+
+void Schedule_Task(void *argument)
+{
+    // ▼ 추가: LCD와 동일한 now 계산을 위한 베이스
+    time_t base_epoch = 0;
+    TickType_t base_tick = 0;
+    int have_base = 0;  // ntp_time을 한 번이라도 읽었는지
+
+    for(;;){
+        // ---- LCD와 같은 방법으로 "표시용 현재시각" 계산 ----
+        // (1) 30초 주기 대신, 여기서는 루프마다 ntp_time을 확인하고 변경되면 베이스 갱신
+        if (osMutexAcquire(NTP_MutexHandle, pdMS_TO_TICKS(10)) == osOK) {
+            static time_t last_ntp = 0;
+            if (ntp_time != 0 && ntp_time != last_ntp) {
+                base_epoch = ntp_time;
+                base_tick  = xTaskGetTickCount();
+                have_base  = 1;
+                last_ntp   = ntp_time;
+            }
+            osMutexRelease(NTP_MutexHandle);
+        }
+
+        time_t now_epoch;
+        if (have_base) {
+            // (2) LCD와 동일하게: now = base_epoch + (경과 tick)
+            TickType_t now_tick = xTaskGetTickCount();
+            uint32_t hz = osKernelGetTickFreq();     // 1초당 tick 수
+            uint32_t dt_ticks = (now_tick - base_tick);
+            now_epoch = base_epoch + (time_t)(dt_ticks / hz);
+        } else {
+            // (3) 첫 동기화 전/실패 시 LCD도 fallback으로 time(NULL) 사용 → 동일하게 처리
+            now_epoch = time(NULL);
+        }
+
+        if (g_sched.enabled){
+		   struct tm *k = localtime(&now_epoch);
+		   if (k){
+			   // ✅ 초 조건 제거: "해당 분 전체"에서 한 번만 실행
+			   if ((uint8_t)k->tm_hour == g_sched.hh &&
+				   (uint8_t)k->tm_min  == g_sched.mm) {
+
+				   printf("[SCHED] 예약 실행 %02u:%02u now=%02d:%02d:%02d\r\n",
+						  g_sched.hh, g_sched.mm,
+						  k->tm_hour, k->tm_min, k->tm_sec);
+
+				   // ✅ FAN이 바로 꺼지지 않도록 hold 켠 뒤 ON
+				   fan_hold = 1;
+				   LED1_ON();
+				   LED2_ON();
+				   FAN_ON();
+
+				   g_sched.enabled = 0;   // 1회성 실행 후 해제
+			   }
+		   }
+	   }
+	   // ⬇ 5초/10초 어느 쪽이든 OK. 여유를 주고 싶으면 1000~2000ms로도 가능.
+	   osDelay(5000);
+    }
+}

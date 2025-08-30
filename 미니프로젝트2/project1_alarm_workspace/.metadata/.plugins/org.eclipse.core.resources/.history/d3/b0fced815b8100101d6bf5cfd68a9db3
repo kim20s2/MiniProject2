@@ -1,0 +1,19 @@
+// app_common.h (추가)
+#pragma once
+#include "cmsis_os.h"
+#include <stdint.h>
+
+typedef enum {
+    EVT_NONE = 0,
+    EVT_GAS_ALARM,
+    EVT_VIB_ALARM,
+    EVT_CLEAR_ALARM
+} app_event_t;
+
+typedef struct {
+    app_event_t type;
+    uint16_t    value;   // 센서값(옵션)
+} app_msg_t;
+
+// 전역 큐 핸들 (freertos.c에서 생성)
+extern osMessageQueueId_t g_lcdQueue;

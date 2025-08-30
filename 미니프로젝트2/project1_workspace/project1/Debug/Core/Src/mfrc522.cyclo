@@ -1,0 +1,16 @@
+../Core/Src/mfrc522.c:5:20:CS_LOW	1
+../Core/Src/mfrc522.c:6:20:CS_HIGH	1
+../Core/Src/mfrc522.c:8:20:RST_HIGH	1
+../Core/Src/mfrc522.c:19:9:MFRC522_ReadReg	1
+../Core/Src/mfrc522.c:30:6:MFRC522_WriteReg	1
+../Core/Src/mfrc522.c:40:6:MFRC522_Init	1
+../Core/Src/mfrc522.c:61:13:PCD_Reset	1
+../Core/Src/mfrc522.c:69:6:MFRC522_AntennaOn	2
+../Core/Src/mfrc522.c:77:6:MFRC522_AntennaOff	1
+../Core/Src/mfrc522.c:83:13:SetBitMask	1
+../Core/Src/mfrc522.c:89:13:ClearBitMask	1
+../Core/Src/mfrc522.c:96:13:MFRC522_CalcCRC	4
+../Core/Src/mfrc522.c:115:16:PCD_ToCard	15
+../Core/Src/mfrc522.c:171:9:MFRC522_Request	3
+../Core/Src/mfrc522.c:183:9:MFRC522_Anticoll	3
+../Core/Src/mfrc522.c:201:9:MFRC522_SelectTag	2

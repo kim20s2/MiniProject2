@@ -1,0 +1,19 @@
+#pragma once
+#include "cmsis_os.h"
+#include <stdint.h>
+
+typedef enum {
+    EVT_NONE = 0,
+    EVT_GAS_ALARM,
+    EVT_VIB_ALARM,
+    EVT_FLM_ALARM
+} app_event_t;
+
+typedef struct {
+    app_event_t type;
+    uint16_t    gas;   // 가스 ADC (PA0)
+    uint16_t    vib;   // 진동 값(지금은 0/1, 필요 시 AO연결로 ADC)
+    uint16_t    flm;   // 플레임 값(0/1)
+} app_msg_t;
+
+extern osMessageQueueId_t g_lcdQueue;

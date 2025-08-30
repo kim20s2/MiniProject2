@@ -1,0 +1,2 @@
+../Core/Src/freertos.c:109:6:MX_FREERTOS_Init	32	static
+../Core/Src/freertos.c:163:6:AlarmCam_Task	16	static

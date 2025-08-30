@@ -1,0 +1,29 @@
+#include "servo.h"
+#include "tim.h"
+
+// SG90 기준
+#define SERVO_MIN 500   // 0도 (0.5ms, TIM3 1MHz 기준)
+#define SERVO_MID 1500  // 90도 (1.5ms)
+#define SERVO_MAX 2500  // 180도 (2.5ms)
+
+// 비 상태 (날씨 파싱해서 업데이트한다고 가정)
+extern int isRaining;
+
+void Servo_Init()
+{
+    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, SERVO_MIN); // 초기 0도
+}
+
+void Servo_SetAngle(int angle)
+{
+    if (angle < 0) angle = 0;
+    if (angle > 180) angle = 180;
+
+    uint32_t pulse = SERVO_MIN + (angle * (SERVO_MAX - SERVO_MIN) / 180);
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pulse);
+}
+
+void Servo_Task(void *argument)
+{
+}

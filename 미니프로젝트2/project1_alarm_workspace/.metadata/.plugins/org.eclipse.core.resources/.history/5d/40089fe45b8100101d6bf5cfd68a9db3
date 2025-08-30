@@ -1,0 +1,70 @@
+#include "LCD_Task.h"
+#include "cmsis_os.h"
+#include "app_common.h"
+#include "usart.h"
+#include <stdio.h>
+#include <string.h>
+#include "lcd.h"
+
+extern osMessageQueueId_t g_lcdQueue;
+
+// ---- 실제 LCD 드라이버로 바꿔 연결하세요 ----
+static void lcd_init(void)         { LCD_Init(); }
+static void lcd_clear(void)        { LCD_Clear(); }
+static void lcd_goto(uint8_t r, uint8_t c) { LCD_SetCursor(r, c); }
+static void lcd_print(const char* s){ LCD_Print(s); }
+
+
+// 디버그 콘솔도 찍어보기
+static void log_uart2(const char* s){
+    HAL_UART_Transmit(&huart2, (uint8_t*)s, strlen(s), HAL_MAX_DELAY);
+}
+
+void LCD_Task(void *argument)
+{
+    (void)argument;
+    app_msg_t msg;
+
+    lcd_init();
+    lcd_clear();
+    lcd_goto(0,0); lcd_print("System Ready");
+    log_uart2("LCD: System Ready\r\n");
+
+    char line1[17] = {0};
+    char line2[17] = {0};
+
+    strcpy(line1, "Status:");
+    strcpy(line2, "Normal");
+    lcd_goto(0,0); lcd_print(line1);
+    lcd_goto(1,0); lcd_print(line2);
+
+    for(;;) {
+        // 메시지 수신 대기 (무한대기)
+        if (osMessageQueueGet(g_lcdQueue, &msg, NULL, osWaitForever) == osOK) {
+            switch(msg.type) {
+                case EVT_GAS_ALARM:
+                    strcpy(line1, "ALARM: GAS   ");
+                    snprintf(line2, sizeof(line2), "Value:%4u   ", msg.value);
+                    break;
+                case EVT_VIB_ALARM:
+                    strcpy(line1, "ALARM: VIB   ");
+                    strcpy(line2, "Detected     ");
+                    break;
+                case EVT_CLEAR_ALARM:
+                default:
+                    strcpy(line1, "Status:      ");
+                    strcpy(line2, "Normal       ");
+                    break;
+            }
+            // LCD 업데이트
+            lcd_clear();
+            lcd_goto(0,0); lcd_print(line1);
+            lcd_goto(1,0); lcd_print(line2);
+
+            // 디버그 로그
+            char dbg[64];
+            snprintf(dbg, sizeof(dbg), "LCD <- msg=%d, val=%u\r\n", (int)msg.type, msg.value);
+            log_uart2(dbg);
+        }
+    }
+}

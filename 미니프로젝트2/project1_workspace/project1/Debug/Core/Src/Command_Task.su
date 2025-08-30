@@ -1,0 +1,10 @@
+../Core/Inc/LED_FAN.h:24:20:LED1_ON	8	static
+../Core/Inc/LED_FAN.h:25:20:LED1_OFF	8	static
+../Core/Inc/LED_FAN.h:26:20:LED2_ON	8	static
+../Core/Inc/LED_FAN.h:27:20:LED2_OFF	8	static
+../Core/Inc/LED_FAN.h:28:20:FAN_ON	8	static
+../Core/Inc/LED_FAN.h:29:20:FAN_OFF	8	static
+../Core/Src/Command_Task.c:22:12:_is_digits_4	16	static
+../Core/Src/Command_Task.c:34:6:esp_event	184	static
+../Core/Src/Command_Task.c:165:12:try_extract_ipd_payload	80	static
+../Core/Src/Command_Task.c:216:6:Command_Task	280	static

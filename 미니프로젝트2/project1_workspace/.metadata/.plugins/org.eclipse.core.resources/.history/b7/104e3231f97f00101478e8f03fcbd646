@@ -1,0 +1,36 @@
+// =============================
+// aiot_task.c
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include "esp.h"
+
+extern osMutexId_t ESP_MutexHandle;
+
+int esp_is_wifi_ready(void);
+
+// Aiot_Task.c
+extern osMutexId_t ESP_MutexHandle;
+
+void Aiot_Task(void *argument)
+{
+    // 1) 부팅 직후 Wi-Fi 초기화 구간은 단독으로 수행
+    if (osMutexAcquire(ESP_MutexHandle, osWaitForever) == osOK) {
+        AiotClient_Init();                      // AT+CWJAP까지 모두 이 안에서
+        osMutexRelease(ESP_MutexHandle);
+    }
+
+    // 2) 이후 루프는 기존 그대로
+    for(;;) {
+        if (!esp_is_wifi_ready()) { vTaskDelay(pdMS_TO_TICKS(2000)); continue; }
+        if (esp_get_status() != 0) {
+            printf("server connecting ...\r\n");
+            if (osMutexAcquire(ESP_MutexHandle, osWaitForever) == osOK) {
+                esp_client_conn();              // 이 부분은 원래도 뮤텍스 사용
+                osMutexRelease(ESP_MutexHandle);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}
+

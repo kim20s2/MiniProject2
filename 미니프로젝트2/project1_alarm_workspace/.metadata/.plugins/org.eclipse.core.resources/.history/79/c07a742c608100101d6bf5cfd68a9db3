@@ -1,0 +1,38 @@
+#include "LCD_Task.h"
+#include "cmsis_os.h"
+#include "app_common.h"
+#include "usart.h"
+#include "lcd.h"   // LCD_Init, LCD_Clear, LCD_SetCursor, LCD_Print
+#include <string.h>
+
+extern osMessageQueueId_t g_lcdQueue;
+
+void LCD_Task(void *argument)
+{
+    (void)argument;
+    app_msg_t msg;
+
+    LCD_Init();
+    LCD_Clear();
+
+    for(;;) {
+        if (osMessageQueueGet(g_lcdQueue, &msg, NULL, osWaitForever) == osOK) {
+            LCD_Clear();
+            switch(msg.type) {
+                case EVT_GAS_ALARM:
+                    LCD_SetCursor(0,0);
+                    LCD_Print("Gas Alarm");
+                    break;
+                case EVT_VIB_ALARM:
+                    LCD_SetCursor(0,0);
+                    LCD_Print("Vib Alarm");
+                    break;
+                case EVT_NONE:
+                default:
+                    LCD_SetCursor(0,0);
+                    LCD_Print("Normal");
+                    break;
+            }
+        }
+    }
+}

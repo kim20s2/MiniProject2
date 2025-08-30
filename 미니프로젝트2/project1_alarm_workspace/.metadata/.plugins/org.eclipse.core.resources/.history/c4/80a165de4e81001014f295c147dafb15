@@ -1,0 +1,102 @@
+// Core/Src/bt_task.c
+#include "bt_task.h"
+#include "main.h"
+#include <string.h>
+#include <stdio.h>
+
+// ===== 외부 USART6 핸들 (CubeMX 생성) =====
+extern UART_HandleTypeDef huart6;
+
+// ===== 내부 상태 =====
+static volatile uint8_t s_rx_byte;
+static char   s_line[64];
+static size_t s_idx = 0;
+
+// 줄 도착 신호용 이진 세마포어
+static SemaphoreHandle_t s_line_sem = NULL;
+
+// ---- 유틸: 문자열 송신 (blocking) ----
+static void bt_puts(const char *s) {
+    HAL_UART_Transmit(&huart6, (uint8_t*)s, strlen(s), HAL_MAX_DELAY);
+}
+
+// ---- 1바이트 수신 재무장 ----
+static inline void arm_rx_it(void) {
+    HAL_UART_Receive_IT(&huart6, (uint8_t*)&s_rx_byte, 1);
+}
+
+// ---- IRQ 콜백 ----
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart == &huart6) {
+        uint8_t c = s_rx_byte;
+
+        // 줄 버퍼에 누적
+        if (s_idx < sizeof(s_line) - 1) {
+            s_line[s_idx++] = (char)c;
+        }
+
+        // 줄 완성 조건: '\n' 또는 버퍼 꽉 참
+        if (c == '\n' || s_idx >= sizeof(s_line) - 1) {
+            s_line[s_idx] = '\0';    // 널 종료
+            s_idx = 0;               // 다음 줄을 위해 초기화
+            BaseType_t hpw = pdFALSE;
+            if (s_line_sem) xSemaphoreGiveFromISR(s_line_sem, &hpw);
+            portYIELD_FROM_ISR(hpw);
+        }
+
+        // 다음 바이트 수신
+        arm_rx_it();
+    }
+}
+
+// ---- 공개: IRQ 수신 시작 (커널 시작 전 1회) ----
+void BT_UART6_StartIT(void)
+{
+    if (!s_line_sem) {
+        s_line_sem = xSemaphoreCreateBinary();
+    }
+    s_idx = 0;
+    arm_rx_it();
+}
+
+// ---- 줄 파서 (아주 단순한 예시) ----
+static void handle_line(const char *line)
+{
+    // 개행/공백 정리
+    char buf[64];
+    size_t n = strlen(line);
+    while (n && (line[n-1] == '\r' || line[n-1] == '\n' || line[n-1] == ' ')) n--;
+    size_t m = (n < sizeof(buf)-1) ? n : sizeof(buf)-1;
+    memcpy(buf, line, m); buf[m] = '\0';
+
+    // 간단 명령 예시
+    if (strcasecmp(buf, "PING") == 0) {
+        bt_puts("PONG\r\n");
+    } else if (strcasecmp(buf, "ALARM?") == 0) {
+        // 필요하면 현재 가스/진동 상태를 리턴하도록 확장
+        bt_puts("ALARM: QUERY NOT WIRED\r\n");
+    } else {
+        // 에코백
+        bt_puts("ECHO: ");
+        bt_puts(buf);
+        bt_puts("\r\n");
+    }
+}
+
+void BT_Task(void *argument)
+{
+    (void)argument;
+    bt_puts("BT Ready (USART6)\r\n");
+
+    // 세마포어가 없으면 생성 (안전망)
+    if (!s_line_sem) s_line_sem = xSemaphoreCreateBinary();
+
+    for (;;)
+    {
+        // 줄 도착 대기
+        if (xSemaphoreTake(s_line_sem, portMAX_DELAY) == pdTRUE) {
+            handle_line((const char*)s_line);
+        }
+    }
+}

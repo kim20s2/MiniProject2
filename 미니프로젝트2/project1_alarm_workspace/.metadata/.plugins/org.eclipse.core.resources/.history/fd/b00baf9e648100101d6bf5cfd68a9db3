@@ -1,0 +1,21 @@
+// app_common.h (추가)
+#pragma once
+#include "cmsis_os.h"
+#include <stdint.h>
+
+typedef enum {
+    EVT_NONE = 0,
+    EVT_GAS_ALARM,
+    EVT_VIB_ALARM
+	EVT_CLEAR_ALARM
+} app_event_t;
+
+typedef struct {
+    app_event_t type;
+    uint16_t    gas;     // 가스 ADC
+   // uint16_t    vib;     // 진동 값 (지금은 0/1 디지털; AO 연결 시 ADC값)
+} app_msg_t;
+
+
+extern osMessageQueueId_t g_lcdQueue;
+

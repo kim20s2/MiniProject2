@@ -1,0 +1,5 @@
+../Core/Inc/LED_FAN.h:24:20:LED1_ON	1
+../Core/Inc/LED_FAN.h:26:20:LED2_ON	1
+../Core/Inc/LED_FAN.h:28:20:FAN_ON	1
+../Core/Src/RFID_Task.c:14:12:is_allowed	3
+../Core/Src/RFID_Task.c:20:6:RFID_Task	4

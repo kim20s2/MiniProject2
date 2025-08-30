@@ -1,0 +1,63 @@
+// Core/Src/Schedule.c
+#include "cmsis_os.h"
+#include "cmsis_os2.h"
+#include "Schedule.h"
+#include "LED_FAN.h"
+#include <time.h>
+#include <stdio.h>
+#include "FanHold.h"
+
+static schedule_t g_sched;
+extern osMutexId_t NTP_MutexHandle;
+extern time_t ntp_time;
+
+void Schedule_Init(void){
+    g_sched.enabled = 0;
+    g_sched.hh = 0;
+    g_sched.mm = 0;
+}
+
+void Schedule_Set(uint8_t hh, uint8_t mm){
+    g_sched.hh = hh;
+    g_sched.mm = mm;
+    g_sched.enabled = 1;
+    printf("[SCHED] today %02u:%02u 예약 등록\r\n", hh, mm);
+}
+
+void Schedule_Clear(void){
+    g_sched.enabled = 0;
+    printf("[SCHED] 예약 해제\r\n");
+}
+
+void Schedule_Task(void *argument)
+{
+    for(;;){
+        if (g_sched.enabled){
+            RTC_TimeTypeDef t;
+            RTC_DateTypeDef d;
+            HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BIN);
+            HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BIN); // 시간 읽은 뒤 반드시 호출
+
+            uint8_t hh = t.Hours;
+            uint8_t mm = t.Minutes;
+            // uint8_t ss = t.Seconds; // 필요하면 사용
+
+            // ✅ LCD 1행이 표시하는 RTC 시:분과 동일 기준으로 비교
+            if (hh == g_sched.hh && mm == g_sched.mm) {
+                printf("[SCHED] 예약 실행 %02u:%02u (RTC=%02u:%02u:%02u)\r\n",
+                       g_sched.hh, g_sched.mm, t.Hours, t.Minutes, t.Seconds);
+
+                // FAN이 바로 꺼지지 않도록 hold 먼저
+                fan_hold = 1;
+                LED1_ON();
+                LED2_ON();
+                FAN_ON();
+
+                printf("[SCHED] LED1, LED2, FAN ON 완료\r\n");
+                g_sched.enabled = 0;  // 1회성 실행 후 자동 해제
+            }
+        }
+        osDelay(5000); // 5초 주기면 해당 분 안에서 확실히 1회 트리거
+    }
+}
+

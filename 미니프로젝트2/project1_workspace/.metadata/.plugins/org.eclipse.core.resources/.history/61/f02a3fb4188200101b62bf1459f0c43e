@@ -1,0 +1,55 @@
+// Core/Src/Schedule.c
+#include "cmsis_os.h"
+#include "cmsis_os2.h"
+#include "Schedule.h"
+#include "LED_FAN.h"
+#include <time.h>
+#include <stdio.h>
+#include "FanHold.h"
+#include "TimeShare.h"   // g_lcd_hh, g_lcd_mm extern
+
+static schedule_t g_sched;
+extern osMutexId_t NTP_MutexHandle;
+extern time_t ntp_time;
+
+void Schedule_Init(void){
+    g_sched.enabled = 0;
+    g_sched.hh = 0;
+    g_sched.mm = 0;
+}
+
+void Schedule_Set(uint8_t hh, uint8_t mm){
+    g_sched.hh = hh;
+    g_sched.mm = mm;
+    g_sched.enabled = 1;
+    printf("[SCHED] today %02u:%02u 예약 등록\r\n", hh, mm);
+}
+
+void Schedule_Clear(void){
+    g_sched.enabled = 0;
+    printf("[SCHED] 예약 해제\r\n");
+}
+
+void Schedule_Task(void *argument)
+{
+    for(;;){
+        if (g_sched.enabled) {
+            uint8_t hh = g_lcd_hh;
+            uint8_t mm = g_lcd_mm;
+
+            if (hh == g_sched.hh && mm == g_sched.mm) {
+                printf("[SCHED] 예약 실행 %02u:%02u (LCD=%02u:%02u)\r\n",
+                       g_sched.hh, g_sched.mm, hh, mm);
+
+                fan_hold = 1;           // FAN이 바로 꺼지지 않도록
+                LED1_ON();
+                LED2_ON();
+                FAN_ON();
+                printf("[SCHED] LED1, LED2, FAN ON 완료\r\n");
+
+                g_sched.enabled = 0;    // 1회 실행 후 자동 해제
+            }
+        }
+        osDelay(5000); // 0.5~1초 정도면 충분
+    }
+}

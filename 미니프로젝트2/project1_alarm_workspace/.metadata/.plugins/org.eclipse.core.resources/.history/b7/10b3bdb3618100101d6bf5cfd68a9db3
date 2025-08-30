@@ -1,0 +1,19 @@
+// app_common.h (추가)
+#pragma once
+#include "cmsis_os.h"
+#include <stdint.h>
+
+typedef enum {
+    EVT_NONE = 0,
+    EVT_GAS_ALARM,
+    EVT_VIB_ALARM,
+    EVT_CLEAR
+} app_event_t;
+
+typedef struct {
+    app_event_t type;
+    uint16_t value;
+} app_msg_t;
+
+extern osMessageQueueId_t g_lcdQueue;
+

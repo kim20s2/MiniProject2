@@ -1,0 +1,35 @@
+// =============================
+// aiot_task.c
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include "esp.h"
+
+extern osMutexId_t ESP_MutexHandle;
+
+int esp_is_wifi_ready(void);
+
+// Aiot_Task.c
+void Aiot_Task(void *argument)
+{
+    AiotClient_Init();  // (가능하면 이 부분도 ESP_Mutex로 감싸면 더 안전)
+
+    for(;;) {
+        if (!esp_is_wifi_ready()) { vTaskDelay(pdMS_TO_TICKS(2000)); continue; }
+
+        // 이제 "Link0가 연결됐는지"만 본다
+        if (esp_get_status()!=0) {
+            printf("server connecting ...\r\n");
+            if (osMutexAcquire(ESP_MutexHandle, osWaitForever)==osOK) {
+                esp_close_link0();                 // 잔여 세션 정리(선택)
+                int rc = esp_client_conn();       // CIPSTART(0)/CIPSEND
+                osMutexRelease(ESP_MutexHandle);
+                printf("[AIOT] conn rc=%d\r\n", rc);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}
+
+
+

@@ -1,0 +1,7 @@
+../Core/Src/BT_Task.c:22:6:BT_UART6_StartIT	1
+../Core/Src/BT_Task.c:28:6:MX_GPIO_LED_ON	1
+../Core/Src/BT_Task.c:32:6:MX_GPIO_LED_OFF	1
+../Core/Src/BT_Task.c:38:6:HAL_UART_RxCpltCallback	4
+../Core/Src/BT_Task.c:59:20:bt_puts	1
+../Core/Src/BT_Task.c:65:6:bluetooth_Event	7
+../Core/Src/BT_Task.c:113:6:BT_Task	2

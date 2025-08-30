@@ -1,0 +1,13 @@
+/*
+ * mfrc522.h
+ *
+ *  Created on: Aug 24, 2025
+ *      Author: kim20
+ */
+
+#ifndef INC_MFRC522_H_
+#define INC_MFRC522_H_
+
+
+
+#endif /* INC_MFRC522_H_ */

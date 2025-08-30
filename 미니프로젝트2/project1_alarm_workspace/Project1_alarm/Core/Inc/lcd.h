@@ -1,0 +1,48 @@
+/*
+ * lcd.h
+ *
+ *  Created on: Aug 23, 2025
+ *      Author: kim20
+ */
+
+#ifndef INC_LCD_H_
+#define INC_LCD_H_
+
+#include "stm32f4xx_hal.h"
+#include <stdio.h>
+#include <string.h>
+
+// I2C 핸들 (CubeMX에서 I2C1 사용했으므로 외부 선언)
+extern I2C_HandleTypeDef hi2c1;
+
+// LCD I2C 주소 (보드마다 다를 수 있음: 0x27 또는 0x3F)
+#define LCD_I2C_ADDR  (0x27 << 1)  // 7비트 주소 << 1 (HAL은 8비트 주소 사용)
+
+// LCD 명령어
+#define LCD_CMD_CLEAR        0x01
+#define LCD_CMD_HOME         0x02
+#define LCD_CMD_ENTRY_MODE   0x04
+#define LCD_CMD_DISPLAY_CTRL 0x08
+#define LCD_CMD_CURSOR_SHIFT 0x10
+#define LCD_CMD_FUNCTION_SET 0x20
+#define LCD_CMD_SET_CGRAM    0x40
+#define LCD_CMD_SET_DDRAM    0x80
+
+// LCD 옵션 비트
+#define LCD_ENTRY_LEFT       0x02
+#define LCD_ENTRY_SHIFT_DEC  0x00
+#define LCD_DISPLAY_ON       0x04
+#define LCD_CURSOR_OFF       0x00
+#define LCD_BLINK_OFF        0x00
+#define LCD_FUNCTION_4BIT    0x00
+#define LCD_FUNCTION_2LINE   0x08
+#define LCD_FUNCTION_5x8     0x00
+
+// 함수 원형
+void LCD_Init(void);
+void LCD_Clear(void);
+void LCD_SetCursor(uint8_t row, uint8_t col);
+void LCD_Print(const char *str);
+void LCD_Printf(const char *fmt, ...);
+
+#endif /* __LCD_H */

@@ -1,0 +1,18 @@
+/*
+ * rtc.h
+ *
+ *  Created on: Aug 23, 2025
+ *      Author: kim20
+ */
+
+#ifndef INC_RTC_H_
+#define INC_RTC_H_
+
+#include "main.h"
+
+extern RTC_HandleTypeDef hrtc;
+
+void MX_RTC_Init(void);
+
+
+#endif /* __RTC_H__ */

@@ -1,0 +1,579 @@
+//서울기술교육센터 AIOT & Embedded System
+//2024-04-16 By KSH
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "esp.h"
+#include <time.h>
+#include "FreeRTOS.h"   // 추가
+#include "task.h"       // 추가
+
+static char ip_addr[16];
+char response[MAX_ESP_RX_BUFFER];
+
+#define NTP_SERVER "time.kriss.re.kr"
+#define NTP_PORT   123
+#define NTP_PACKET_SIZE 48
+
+
+//==================uart2=========================
+extern UART_HandleTypeDef huart2;
+volatile unsigned char rx2Flag = 0;
+volatile char rx2Data[50];
+uint8_t cdata;
+
+//==================uart6=========================
+//extern volatile unsigned char rx2Flag;
+//extern volatile char rx2Data[50];
+//extern uint8_t cdata;
+static uint8_t data;
+cb_data_t cb_data;
+extern UART_HandleTypeDef huart6;
+
+// NTP 관련 함수 선언
+
+int esp_at_command(uint8_t *cmd, uint8_t *resp, uint16_t *length, int16_t time_out)
+{
+	*length = 0;
+	memset(resp, 0x00, MAX_UART_RX_BUFFER);
+	memset(&cb_data, 0x00, sizeof(cb_data_t));
+
+	// 명령 송신
+	if (HAL_UART_Transmit(&huart6, cmd, strlen((char *)cmd), 100) != HAL_OK)
+		return -1;
+
+	while (time_out > 0)
+	{
+		if (cb_data.length >= MAX_UART_RX_BUFFER)
+			return -2;
+		else if (strstr((char *)cb_data.buf, "ERROR") != NULL)
+			return -3;
+		else if (strstr((char *)cb_data.buf, "CLOSED") != NULL)   // 🔥 TCP 끊김 감지
+		{
+			printf("ESP: TCP connection closed.\r\n");
+			esp_client_conn();   // 자동 재연결
+			return -5;
+		}
+		else if (strstr((char *)cb_data.buf, "OK") != NULL)
+		{
+			memcpy(resp, cb_data.buf, cb_data.length);
+			*length = cb_data.length;
+			return 0;
+		}
+
+		time_out -= 10;
+		HAL_Delay(10);
+	}
+	return -4; // Timeout
+}
+
+// 한 줄씩 ESP 응답 읽기
+
+static int esp_read_line(char *buf, int buf_size, int timeout_ms)
+{
+    int i = 0;
+    int elapsed = 0;
+
+    memset(buf, 0, buf_size);
+
+    while (elapsed < timeout_ms)
+    {
+        if (cb_data.length > 0)
+        {
+            char c = cb_data.buf[0];
+
+            // 버퍼 앞으로 이동
+            memmove(cb_data.buf, cb_data.buf + 1, cb_data.length - 1);
+            cb_data.length--;
+
+            if (c == '\n' || c == '\r')
+            {
+                if (i == 0) // 빈 줄 무시
+                    continue;
+                buf[i] = 0;
+                return i; // 읽은 길이 반환
+            }
+
+            if (i < buf_size - 1)
+                buf[i++] = c;
+        }
+        else
+        {
+            HAL_Delay(1);
+            elapsed += 1;
+        }
+    }
+    return 0; // 타임아웃
+}
+
+
+static int esp_reset(void)
+{
+    uint16_t length = 0;
+    if(esp_at_command((uint8_t *)"AT+RST\r\n", (uint8_t *)response, &length, 1000) != 0)
+    {
+    	return -1;
+    }
+    else
+    	HAL_Delay(500);	//reboot
+    return 0;
+}
+
+static int esp_get_ip_addr(uint8_t is_debug)
+{
+    if(strlen(ip_addr) != 0)
+    {
+        if(strcmp(ip_addr, "0.0.0.0") == 0)
+            return -1;
+    }
+    else
+    {
+        uint16_t length;
+        if(esp_at_command((uint8_t *)"AT+CIPSTA?\r\n", (uint8_t *)response, &length, 1000) != 0)
+            printf("ip_state command fail\r\n");
+        else
+        {
+            char *line = strtok(response, "\r\n");
+
+            if(is_debug)
+            {
+                for(int i = 0 ; i < length ; i++)
+                    printf("%c", response[i]);
+            }
+
+            while(line != NULL)
+            {
+                if(strstr(line, "ip:") != NULL)
+                {
+                    char *ip;
+
+                    strtok(line, "\"");
+                    ip = strtok(NULL, "\"");
+                    if(strcmp(ip, "0.0.0.0") != 0)
+                    {
+                        memset(ip_addr, 0x00, sizeof(ip_addr));
+                        memcpy(ip_addr, ip, strlen(ip));
+                        return 0;
+                    }
+                }
+                line = strtok(NULL, "\r\n");
+            }
+        }
+
+        return -1;
+    }
+
+    return 0;
+}
+
+static int request_ip_addr(uint8_t is_debug)
+{
+    uint16_t length = 0;
+
+    if(esp_at_command((uint8_t *)"AT+CIFSR\r\n", (uint8_t *)response, &length, 1000) != 0)
+        printf("request ip_addr command fail\r\n");
+    else
+    {
+        char *line = strtok(response, "\r\n");
+
+        if(is_debug)
+        {
+            for(int i = 0 ; i < length ; i++)
+                printf("%c", response[i]);
+        }
+
+        while(line != NULL)
+        {
+            if(strstr(line, "CIFSR:STAIP") != NULL)
+            {
+                char *ip;
+
+                strtok(line, "\"");
+                ip = strtok(NULL, "\"");
+                if(strcmp(ip, "0.0.0.0") != 0)
+                {
+                    memset(ip_addr, 0x00, sizeof(ip_addr));
+                    memcpy(ip_addr, ip, strlen(ip));
+                    return 0;
+                }
+            }
+            line = strtok(NULL, "\r\n");
+        }
+    }
+    return -1;
+}
+
+int esp_client_conn()
+{
+	char at_cmd[MAX_ESP_COMMAND_LEN] = {0, };
+  uint16_t length = 0;
+	sprintf(at_cmd,"AT+CIPSTART=\"TCP\",\"%s\",%d\r\n",DST_IP,DST_PORT);
+	esp_at_command((uint8_t *)at_cmd,(uint8_t *)response, &length, 1000);					//CONNECT
+
+	esp_send_data("["LOGID":"PASSWD"]");
+	return 0;
+}
+int esp_get_status()
+{
+	uint16_t length = 0;
+	esp_at_command((uint8_t *)"AT+CIPSTATUS\r\n",(uint8_t *)response, &length, 1000);					//CONNECT
+
+    if(strstr((char *)response, "STATUS:3") != NULL)  //STATUS:3 The ESP8266 Station has created a TCP or UDP transmission
+    {
+    	return 0;
+    }
+	return -1;
+}
+int drv_esp_init(void)
+{
+    memset(ip_addr, 0x00, sizeof(ip_addr));
+    HAL_UART_Receive_IT(&huart6, &data, 1);
+
+    return esp_reset();
+}
+void reset_func()
+{
+	printf("esp reset... ");
+	if(esp_reset() == 0)
+			printf("OK\r\n");
+	else
+			printf("fail\r\n");
+}
+
+void version_func()
+{
+  uint16_t length = 0;
+  printf("esp firmware version\r\n");
+  if(esp_at_command((uint8_t *)"AT+GMR\r\n", (uint8_t *)response, &length, 1000) != 0)
+      printf("ap scan command fail\r\n");
+  else
+  {
+      for(int i = 0 ; i < length ; i++)
+          printf("%c", response[i]);
+  }
+}
+
+void ap_conn_func(char *ssid, char *passwd)
+{
+  uint16_t length = 0;
+  char at_cmd[MAX_ESP_COMMAND_LEN] = {0, };
+  if(ssid == NULL || passwd == NULL)
+  {
+      printf("invalid command : ap_conn <ssid> <passwd>\r\n");
+      return;
+  }
+  if(esp_at_command((uint8_t *)"AT+CWMODE=1\r\n", (uint8_t *)response, &length, 1000) != 0)
+      printf("Station mode fail\r\n");
+  sprintf(at_cmd, "AT+CWJAP=\"%s\",\"%s\"\r\n", ssid,passwd);
+  if(esp_at_command((uint8_t *)at_cmd, (uint8_t *)response, &length, 6000) != 0)
+      printf("ap scan command fail : %s\r\n",at_cmd);
+}
+
+void ip_state_func()
+{
+  uint16_t length = 0;
+  if(esp_at_command((uint8_t *)"AT+CWJAP?\r\n", (uint8_t *)response, &length, 1000) != 0)
+      printf("ap connected info command fail\r\n");
+  else
+  {
+      for(int i = 0 ; i < length ; i++)
+          printf("%c", response[i]);
+  }
+  printf("\r\n");
+
+  if(esp_get_ip_addr(1) == 0)
+      printf("ip_addr = [%s]\r\n", ip_addr);
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if(huart->Instance == USART6)  // ESP
+    {
+        if(cb_data.length < MAX_ESP_RX_BUFFER)
+        {
+            cb_data.buf[cb_data.length++] = data;
+            if(data == '\n')   // 한 프레임 끝 이부분 수정
+            {
+                cb_data.new_data = 1; // Task에서 처리하도록 신호
+            }
+        }
+        HAL_UART_Receive_IT(huart, &data, 1);
+    }
+
+    if(huart->Instance == USART2)  // 콘솔
+    {
+        static int i = 0;
+        rx2Data[i] = cdata;
+        if(rx2Data[i] == '\r')
+        {
+            rx2Data[i] = '\0';
+            rx2Flag = 1;
+            i = 0;
+        }
+        else
+        {
+            i++;
+        }
+        HAL_UART_Receive_IT(huart, &cdata, 1);
+    }
+}
+
+
+
+void AiotClient_Init()
+{
+	reset_func();
+	version_func();
+	//ip_state_func();
+	ap_conn_func(SSID,PASS);
+	request_ip_addr(1);
+	esp_client_conn();
+	esp_get_status();
+}
+
+
+void esp_send_data(char *data)
+{
+	char at_cmd[MAX_ESP_COMMAND_LEN] = {0, };
+	uint16_t length = 0;
+	sprintf(at_cmd,"AT+CIPSEND=%d\r\n",strlen(data));
+	if(esp_at_command((uint8_t *)at_cmd,(uint8_t *)response, &length, 1000) == 0)
+	{
+		esp_at_command((uint8_t *)data,(uint8_t *)response, &length, 1000);
+	}
+}
+
+//==================uart2=========================
+int drv_uart_init(void)
+{
+    HAL_UART_Receive_IT(&huart2, &cdata,1);
+    return 0;
+}
+
+int drv_uart_tx_buffer(uint8_t *buf, uint16_t size)
+{
+    if(HAL_UART_Transmit(&huart2, buf, size, 100) != HAL_OK)
+        return -1;
+
+    return 0;
+}
+int __io_putchar(int ch)
+{
+    if(HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 10) == HAL_OK)
+        return ch;
+    return -1;
+}
+
+// AT+CIPSNTPTIME? 결과 한 줄 파싱
+int parse_cipsntptime_line(const char *line, time_t *epoch_out)
+{
+    // 예: +CIPSNTPTIME:Thu Aug 17 15:24:30 2023
+    struct tm tm_info;
+    memset(&tm_info, 0, sizeof(struct tm));
+
+    if (strstr(line, "+CIPSNTPTIME:") == NULL)
+        return -1;
+
+    // 문자열 파싱
+    char weekday[4], month[4];
+    int day, year, hour, min, sec;
+
+    int ret = sscanf(line, "+CIPSNTPTIME:%3s %3s %d %d:%d:%d %d",
+                     weekday, month, &day, &hour, &min, &sec, &year);
+
+    if (ret == 7)
+    {
+        if (strcmp(month, "Jan") == 0) tm_info.tm_mon = 0;
+        else if (strcmp(month, "Feb") == 0) tm_info.tm_mon = 1;
+        else if (strcmp(month, "Mar") == 0) tm_info.tm_mon = 2;
+        else if (strcmp(month, "Apr") == 0) tm_info.tm_mon = 3;
+        else if (strcmp(month, "May") == 0) tm_info.tm_mon = 4;
+        else if (strcmp(month, "Jun") == 0) tm_info.tm_mon = 5;
+        else if (strcmp(month, "Jul") == 0) tm_info.tm_mon = 6;
+        else if (strcmp(month, "Aug") == 0) tm_info.tm_mon = 7;
+        else if (strcmp(month, "Sep") == 0) tm_info.tm_mon = 8;
+        else if (strcmp(month, "Oct") == 0) tm_info.tm_mon = 9;
+        else if (strcmp(month, "Nov") == 0) tm_info.tm_mon = 10;
+        else if (strcmp(month, "Dec") == 0) tm_info.tm_mon = 11;
+
+        tm_info.tm_mday = day;
+        tm_info.tm_hour = hour;
+        tm_info.tm_min  = min;
+        tm_info.tm_sec  = sec;
+        tm_info.tm_year = year - 1900;
+
+        *epoch_out = mktime(&tm_info);
+        return 0;
+    }
+    return -1;
+}
+
+int esp_ntp_config(void)
+{
+    char cmd[128];
+    sprintf(cmd, "AT+CIPSNTPCFG=1,9,\"%s\"\r\n", NTP_SERVER);
+    if(HAL_UART_Transmit(&huart6, (uint8_t *)cmd, strlen(cmd), 100) != HAL_OK)
+        return -1;
+
+    vTaskDelay(pdMS_TO_TICKS(2000)); // 설정 반영 대기
+    return 0;
+}
+
+void get_base_datetime(char *base_date_str, size_t date_len,
+                       char *base_time_str, size_t time_len)
+{
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+
+    // 기상청 API 규칙: 현재 시간보다 30~40분 전 시간 기준 사용 권장
+    int base_hour = tm_info->tm_hour;
+    int base_min = tm_info->tm_min;
+
+    if (base_min < 40) {
+        // 40분 이전이면 한 시간 전 정각으로 맞춤
+        base_hour -= 1;
+        if (base_hour < 0) {
+            base_hour = 23;
+            tm_info->tm_mday -= 1;
+            mktime(tm_info); // 날짜 보정
+        }
+    }
+
+    // YYYYMMDD
+    strftime(base_date_str, date_len, "%Y%m%d", tm_info);
+    // HHMM (분은 항상 00으로)
+    snprintf(base_time_str, time_len, "%02d00", base_hour);
+}
+// 최소 의존: huart6, esp_at_command(), esp_read_line(), response[]
+// 서울 강서구 nx=58, ny=126
+// ====== 초단기실황 호출 (HTTPS, SSL) ======
+// 서울 강서구 nx=58, ny=126
+int esp_weather_ultra_request(const char *apiKey, int nx, int ny, char *outBuf, size_t outSize)
+{
+    uint16_t length = 0;
+    char line[256];
+
+    // (중요) 다른 TCP 세션이 열려있을 수 있으니 먼저 닫기 (실패 무시)
+    (void)esp_at_command((uint8_t*)"AT+CIPCLOSE\r\n", (uint8_t*)response, &length, 1500);
+
+    // SSL 접속
+    if (esp_at_command((uint8_t*)"AT+CIPSTART=\"SSL\",\"apihub.kma.go.kr\",443\r\n",
+                       (uint8_t*)response, &length, 20000) != 0) {
+        printf("CIPSTART SSL fail\r\n");
+        return -1;
+    }
+
+    // ---- 여기 추가: 요청 버퍼 선언 + 날짜/시간 계산 ----
+    char httpReq[700];                 // ⬅⬅⬅ 선언 누락이 원인이었습니다
+    char base_date_str[16];
+    char base_time_str[16];
+    get_base_datetime(base_date_str, sizeof(base_date_str),
+                      base_time_str, sizeof(base_time_str));
+
+    // 사용자가 제공한 허브 URL 형식 (XML, 초단기실황)
+    // nx,ny는 호출 인자 사용 (강서구: nx=58, ny=125 권장)
+    snprintf(httpReq, sizeof(httpReq),
+        "GET /api/typ02/openApi/VilageFcstInfoService_2.0/getUltraSrtNcst"
+        "?pageNo=1&numOfRows=1000&dataType=XML"
+        "&base_date=%s&base_time=%s&nx=%d&ny=%d&authKey=%s HTTP/1.1\r\n"
+        "Host: apihub.kma.go.kr\r\n"
+        "Connection: close\r\n\r\n",
+        base_date_str, base_time_str, nx, ny, apiKey);
+
+    // 전송 길이 통지
+    char cmd[48];
+    snprintf(cmd, sizeof(cmd), "AT+CIPSEND=%d\r\n", (int)strlen(httpReq));
+    if (esp_at_command((uint8_t*)cmd, (uint8_t*)response, &length, 5000) != 0) {
+        printf("CIPSEND fail\r\n");
+        return -2;
+    }
+
+    // HTTP 요청 전송
+    if (HAL_UART_Transmit(&huart6, (uint8_t*)httpReq, strlen(httpReq), 5000) != HAL_OK) {
+        printf("payload tx fail\r\n");
+        return -3;
+    }
+
+    // 응답 수신 (헤더+본문 통째로)
+    size_t used = 0;
+    memset(outBuf, 0, outSize);
+
+    int idle_retry = 6; // 최대 약 6초
+    while (idle_retry-- > 0) {
+        int got = esp_read_line(line, sizeof(line), 1000);
+        if (got > 0) {
+            size_t L = (size_t)got;
+            if (used + L + 2 < outSize) {
+                memcpy(outBuf + used, line, L);
+                used += L;
+                outBuf[used++] = '\n';
+                outBuf[used] = 0;
+            }
+            idle_retry = 3; // 데이터가 오면 조금 더 기다림
+        } else {
+            // 1초 동안 수신 없음
+        }
+    }
+
+    // 연결 종료(실패 무시)
+    (void)esp_at_command((uint8_t*)"AT+CIPCLOSE\r\n", (uint8_t*)response, &length, 2000);
+
+    // 간단 상태 확인
+    if (strstr(outBuf, "HTTP/1.1 200") == NULL) {
+        printf("weather http status not 200\r\n");
+        return -4;
+    }
+
+    return 0;
+}
+
+
+// ====== 초단기실황 파서: T1H(기온), REH(습도), PTY(강수형태) ======static const char* skip_headers(const char *s)
+{
+    if (!s) return NULL;
+    while (*s && *s!='{' && *s!='[') s++;
+    return *s ? s : NULL;
+}
+
+}
+static int pick_obsr(const char *json, const char *cat, char *out, size_t n){
+    // "category":"T1H" → 같은 item 블록에서 "obsrValue":"값" 추출
+    char key[40]; snprintf(key,sizeof(key),"\"category\":\"%s\"",cat);
+    const char *p = strstr(json, key);
+    if(!p) return -1;
+    const char *k = strstr(p, "\"obsrValue\":\"");
+    if(!k) return -1;
+    k = strchr(k, '\"'); if(!k) return -1;
+    k++;
+    const char *q = strchr(k, '\"'); if(!q) return -1;
+    size_t len = (size_t)(q-k); if(len>=n) len=n-1;
+    memcpy(out,k,len); out[len]=0;
+    return 0;
+}
+
+void parse_weather_now(const char *resp_all)
+{
+    const char *json = skip_headers(resp_all);
+    if(!json){ printf("weather: invalid http\r\n"); return; }
+
+    char t1h[12]={0}, reh[12]={0}, pty[8]={0};
+
+    (void)pick_obsr(json,"T1H",t1h,sizeof(t1h)); // 기온(℃)
+    (void)pick_obsr(json,"REH",reh,sizeof(reh)); // 습도(%)
+    (void)pick_obsr(json,"PTY",pty,sizeof(pty)); // 강수형태(0~4)
+
+    printf("[강서구 현재]\r\n");
+    if(t1h[0]) printf("기온: %s°C\r\n", t1h); else printf("기온: -\r\n");
+    if(reh[0]) printf("습도: %s%%\r\n", reh); else printf("습도: -\r\n");
+
+    if(pty[0]) {
+        int code = atoi(pty);
+        const char* rain =
+            (code==0)?"강수 없음":(code==1)?"비":(code==2)?"비/눈":(code==3)?"눈":(code==4)?"소나기":"기타";
+        printf("강수형태: %s (코드:%d)\r\n", rain, code);
+    } else {
+        printf("강수형태: -\r\n");
+    }
+}
+

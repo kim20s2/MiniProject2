@@ -1,0 +1,7 @@
+../Core/Src/Weather_Task.c:28:13:set_ryg	24	static
+../Core/Src/Weather_Task.c:40:12:json_pick_value	104	static
+../Core/Src/Weather_Task.c:69:12:strip_ipd_markers	48	static
+../Core/Src/Weather_Task.c:100:12:dechunk_simple	40	static
+../Core/Src/Weather_Task.c:122:12:kma_ultra_fcst_base	56	static
+../Core/Src/Weather_Task.c:149:20:pty_text	16	static
+../Core/Src/Weather_Task.c:165:6:Weather_Task	3000	static

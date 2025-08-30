@@ -1,0 +1,23 @@
+#pragma once
+#include "cmsis_os.h"
+#include <stdint.h>
+
+typedef enum {
+    EVT_NONE = 0,
+    EVT_GAS_ALARM,
+    EVT_VIB_ALARM,
+    EVT_FLM_ALARM,
+    EVT_PIR_ALARM      // ★ 추가
+} app_event_t;
+
+typedef struct {
+    app_event_t type;
+    uint16_t    gas;   // 가스 ADC
+    uint16_t    vib;   // 진동 det(0/1)
+    uint16_t    flm;   // 플레임 det(0/1)
+    uint8_t     pir;   // ★ PIR det(0/1)
+} app_msg_t;
+
+extern volatile uint8_t g_pir_detected; // PIR_Task가 갱신
+
+extern osMessageQueueId_t g_lcdQueue;

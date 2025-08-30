@@ -1,0 +1,65 @@
+// =============================
+// LCD_Task.c  (for lcd_i2c.c API)
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include "main.h"
+#include "lcd_i2c.h"
+// LCD_Task.c (또는 main.c에 LCD_Task)
+// LCD 드라이버 함수 이름에 맞게 바꿔주세요.
+extern RTC_HandleTypeDef hrtc;
+extern osMutexId_t Weather_MutexHandle;
+extern volatile float g_t1h;
+extern volatile int   g_reh;
+extern volatile int   g_pty;
+
+static void lcd_line16(uint8_t row, const char *s)
+{
+    char buf[17]; size_t n=0;
+    while (n<16 && s[n]) { buf[n]=s[n]; n++; }
+    while (n<16) { buf[n++]=' '; }
+    buf[16]='\0';
+    LCD_SetCursor(0, row);
+    LCD_Print(buf);
+}
+
+void LCD_Task(void *argument)
+{
+    TickType_t last = xTaskGetTickCount();
+    char line[32];
+    int sec30 = 0;
+
+    for(;;) {
+        // (1) 1행: HH:MM:SS
+        RTC_TimeTypeDef t; RTC_DateTypeDef d;
+        HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BIN);
+        HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BIN); // 반드시 시간 다음에 읽기
+        snprintf(line, sizeof(line), "%02u:%02u:%02u", t.Hours, t.Minutes, t.Seconds);
+        lcd_line16(0, line);
+
+        // (2) 30초마다 2행: 날씨 캐시 (뮤텍스 최대 5ms만 시도)
+        if (++sec30 >= 30) {
+            sec30 = 0;
+            float t1h = 0; int reh=-1, pty=-1;
+            if (osMutexAcquire(Weather_MutexHandle, pdMS_TO_TICKS(5)) == osOK) {
+                t1h = g_t1h; reh = g_reh; pty = g_pty;
+                osMutexRelease(Weather_MutexHandle);
+            }
+            // 값 없는 초기상태면 건너뛰거나 플레이스홀더 표시
+            if (reh >= 0 && pty >= 0) {
+                const char *pty_s = (pty==0?"맑":pty==1?"비":pty==2?"비/눈":pty==3?"눈":pty==4?"소나":"?");
+                snprintf(line, sizeof(line), "%2dC RH%2d %-3s", (int)t1h, reh, pty_s);
+                lcd_line16(1, line);
+            } else {
+                lcd_line16(1, "--C RH-- --");
+            }
+        }
+
+        // ★ 반드시 주기 지키기(1초). 딜레이 없으면 통신이 망가집니다.
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(1000));
+    }
+}
+
+

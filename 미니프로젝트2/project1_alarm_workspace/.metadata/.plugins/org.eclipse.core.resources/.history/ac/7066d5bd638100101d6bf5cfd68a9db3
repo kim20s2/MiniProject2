@@ -1,0 +1,37 @@
+#include "LCD_Task.h"
+#include "cmsis_os.h"
+#include "app_common.h"
+#include "lcd.h"
+#include <stdio.h>
+#include <string.h>
+
+extern osMessageQueueId_t g_lcdQueue;
+
+void LCD_Task(void *argument)
+{
+    (void)argument;
+    app_msg_t msg;
+
+    LCD_Init();
+    LCD_Clear();
+
+    for(;;) {
+        if (osMessageQueueGet(g_lcdQueue, &msg, NULL, osWaitForever) == osOK) {
+
+            char line1[17], line2[17];
+
+            switch (msg.type) {
+                case EVT_GAS_ALARM: snprintf(line1, sizeof(line1), "Gas Alarm"); break;
+                case EVT_VIB_ALARM: snprintf(line1, sizeof(line1), "Vib Alarm"); break;
+                default:            snprintf(line1, sizeof(line1), "Normal");    break;
+            }
+
+            // vib는 지금 0/1 디지털 값. AO를 PA1로 연결하면 ADC값으로 교체 가능.
+            snprintf(line2, sizeof(line2), "Gas:%4u Vib:%1u", msg.gas, (unsigned)msg.vib);
+
+            LCD_Clear();
+            LCD_SetCursor(0,0); LCD_Print(line1);
+            LCD_SetCursor(1,0); LCD_Print(line2);
+        }
+    }
+}

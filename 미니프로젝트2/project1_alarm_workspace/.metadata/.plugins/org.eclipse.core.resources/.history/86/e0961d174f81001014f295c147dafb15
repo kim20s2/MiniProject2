@@ -1,0 +1,10 @@
+/*
+ * app_common.c
+ *
+ *  Created on: Aug 25, 2025
+ *      Author: kim20
+ */
+#include "app_common.h"
+QueueHandle_t xLcdQueue = NULL;
+
+

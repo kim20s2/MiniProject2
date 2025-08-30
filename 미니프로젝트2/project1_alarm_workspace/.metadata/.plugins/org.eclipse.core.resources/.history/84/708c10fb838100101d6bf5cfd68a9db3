@@ -1,0 +1,104 @@
+#include "LCD_Task.h"
+#include "cmsis_os.h"
+#include "app_common.h"
+#include "lcd.h"
+#include <stdio.h>
+#include <string.h>
+
+extern osMessageQueueId_t g_lcdQueue;
+
+// 16자 고정 폭으로 패딩
+static void make_fixed16(char out[17], const char* in) {
+    // 좌측 정렬, 남는 칸은 공백
+    snprintf(out, 17, "%-16s", in);
+    out[16] = '\0';
+}
+
+// 바뀐 구간만 덮어쓰기 (라인 클리어 금지!)
+static void lcd_update_line(uint8_t row, char new16[17], char prev16[17]) {
+    if (memcmp(prev16, new16, 16) == 0) return; // 동일하면 아무 것도 안 함
+
+    // 첫 번째 차이 위치 탐색
+    int start = 0;
+    while (start < 16 && prev16[start] == new16[start]) start++;
+
+    // 마지막 차이 뒤(미포함) 위치 탐색
+    int end = 15;
+    while (end >= start && prev16[end] == new16[end]) end--;
+
+    // 바뀐 부분만 커서 이동 후 덮어쓰기
+    LCD_SetCursor(row, (uint8_t)start);
+    // 필요한 부분만 출력
+    char segment[17] = {0};
+    int len = end - start + 1;
+    memcpy(segment, &new16[start], len);
+    segment[len] = '\0';
+    LCD_Print(segment);
+
+    // 캐시 갱신
+    memcpy(prev16, new16, 16);
+}
+
+static void build_line1_from_mask(char out16[17], uint8_t mask) {
+    if (mask == 0) {
+        snprintf(out16, 17, "%-16s", "Normal");
+        return;
+    }
+    char buf[32] = "ALARM:";
+    size_t n = strlen(buf);
+
+    // 토큰 추가 헬퍼
+    auto append_tok = [&](const char* tok){
+        if (n >= 16) return;
+        if (buf[n-1] != ':') { // 이미 뭔가 붙었다면 구분자 '/'
+            if (n < 16) buf[n++] = '/';
+        }
+        // 토큰 복사(넘치면 잘림)
+        while (*tok && n < 16) buf[n++] = *tok++;
+        buf[n] = '\0';
+    };
+
+    if (mask & 0x01) append_tok("GAS");
+    if (mask & 0x02) append_tok("VIB");
+    if (mask & 0x04) append_tok("FLM");
+
+    snprintf(out16, 17, "%-16s", buf); // 16칸 고정 폭
+}
+
+void LCD_Task(void *argument)
+{
+    (void)argument;
+    app_msg_t msg;
+
+    // 부팅 1회만 초기화/클리어
+    LCD_Init();
+    LCD_Clear();
+
+    // 캐시 버퍼(이전 표시 내용)
+    char prev1[17] = "                ";
+    char prev2[17] = "                ";
+
+    // 최초 화면
+    char line1_16[17], line2_16[17];
+    make_fixed16(line1_16, "Normal");
+    make_fixed16(line2_16, "G:0   V:0 F:0");
+    lcd_update_line(0, line1_16, prev1);
+    lcd_update_line(1, line2_16, prev2);
+
+    for(;;) {
+        if (osMessageQueueGet(g_lcdQueue, &msg, NULL, osWaitForever) == osOK) {
+            char line1_16[17], line2_16[17];
+
+            // ★ 1행: 마스크 기반 조합(래치 결과)
+            build_line1_from_mask(line1_16, msg.line1_mask);
+
+            // ★ 2행: PIR 표시(래치 결과 msg.pir 사용)
+            if (msg.pir) snprintf(line2_16, 17, "%-16s", "PIR ALARM");
+            else         snprintf(line2_16, 17, "%-16s", "PIR NONE");
+
+            // (깜빡임 최소화 버전 사용 중이면 부분갱신 함수로 출력)
+            lcd_update_line(0, line1_16, prev1);
+            lcd_update_line(1, line2_16, prev2);
+        }
+    }
+}

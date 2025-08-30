@@ -1,0 +1,3 @@
+../Core/Src/Sensor_Task.c:45:20:outputs_set	1
+../Core/Src/Sensor_Task.c:50:24:ms_now	1
+../Core/Src/Sensor_Task.c:54:6:Sensor_Task	49

@@ -1,0 +1,104 @@
+// Core/Src/dht11.c
+#include "dht11.h"
+
+// ─────────── DWT 기반 us 지연 ───────────
+static uint8_t dwt_inited = 0;
+
+void DWT_Delay_Init(void)
+{
+    if (!dwt_inited) {
+        CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+        DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk; // cycle counter enable
+        dwt_inited = 1;
+    }
+}
+
+void DWT_Delay_us(uint32_t us)
+{
+    uint32_t clk = HAL_RCC_GetHCLKFreq();   // F411: 보통 84MHz
+    uint32_t cycles = (clk / 1000000) * us;
+    uint32_t start = DWT->CYCCNT;
+    while ((DWT->CYCCNT - start) < cycles) { __NOP(); }
+}
+
+// ─────────── GPIO 모드 전환 ───────────
+static void DHT_SetOutput(void)
+{
+    GPIO_InitTypeDef g = {0};
+    g.Pin = DHT_Pin;
+    g.Mode = GPIO_MODE_OUTPUT_PP;  // PP로 충분 (보드에 풀업 존재: KY-015 모듈)
+    g.Pull = GPIO_NOPULL;
+    g.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(DHT_GPIO_Port, &g);
+}
+
+static void DHT_SetInput(void)
+{
+    GPIO_InitTypeDef g = {0};
+    g.Pin = DHT_Pin;
+    g.Mode = GPIO_MODE_INPUT;      // 풀업은 모듈에 있음. 없으면 PULLUP으로
+    g.Pull = GPIO_NOPULL;
+    g.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(DHT_GPIO_Port, &g);
+}
+
+static int wait_level_with_timeout(GPIO_PinState level, uint32_t timeout_us)
+{
+    uint32_t clk = HAL_RCC_GetHCLKFreq();
+    uint32_t cycles_to = (clk/1000000)*timeout_us;
+    uint32_t start = DWT->CYCCNT;
+    while (HAL_GPIO_ReadPin(DHT_GPIO_Port, DHT_Pin) != level) {
+        if ((DWT->CYCCNT - start) > cycles_to) return -1;
+    }
+    return 0;
+}
+
+// 반환 0 = OK, <0 = 에러
+int DHT11_Read(uint8_t *temp_c, uint8_t *rh)
+{
+    uint8_t data[5] = {0};
+
+    DWT_Delay_Init();
+
+    // 1) 스타트 신호 (MCU -> 센서)
+    DHT_SetOutput();
+    HAL_GPIO_WritePin(DHT_GPIO_Port, DHT_Pin, GPIO_PIN_RESET);
+    HAL_Delay(18);                     // >=18ms
+    HAL_GPIO_WritePin(DHT_GPIO_Port, DHT_Pin, GPIO_PIN_SET);
+    DWT_Delay_us(30);                  // 20~40us
+    DHT_SetInput();
+
+    // 2) 센서 응답: LOW 80us + HIGH 80us
+    if (wait_level_with_timeout(GPIO_PIN_RESET, 100) < 0) return -1;
+    if (wait_level_with_timeout(GPIO_PIN_SET,   120) < 0) return -2;
+    if (wait_level_with_timeout(GPIO_PIN_RESET, 120) < 0) return -3; // 데이터 시작 전 LOW 50us 진입
+
+    // 3) 40비트 수신
+    for (int i=0; i<40; i++) {
+        // LOW(≈50us) 종료 대기
+        if (wait_level_with_timeout(GPIO_PIN_SET, 100) < 0) return -4;
+
+        // HIGH 길이 측정
+        uint32_t start = DWT->CYCCNT;
+        if (wait_level_with_timeout(GPIO_PIN_RESET, 100) < 0) return -5;
+        uint32_t width_cycles = DWT->CYCCNT - start;
+
+        // 약 26~28us = 0, 약 70us = 1
+        // 임계 50us로 분기
+        uint32_t cycles_50us = (HAL_RCC_GetHCLKFreq()/1000000)*50;
+        uint8_t bit = (width_cycles > cycles_50us) ? 1 : 0;
+
+        data[i/8] <<= 1;
+        data[i/8] |= bit;
+    }
+
+    // 4) 체크섬
+    uint8_t sum = (uint8_t)(data[0] + data[1] + data[2] + data[3]);
+    if (sum != data[4]) return -6;
+
+    // DHT11 포맷: RH int, RH dec, T int, T dec, checksum
+    if (rh)   *rh   = data[0];    // 정수부
+    if (temp_c) *temp_c = data[2];
+
+    return 0;
+}

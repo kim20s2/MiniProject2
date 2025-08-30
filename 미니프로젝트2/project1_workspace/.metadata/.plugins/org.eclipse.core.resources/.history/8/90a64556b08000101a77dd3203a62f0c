@@ -1,0 +1,66 @@
+// =============================
+// ntp_task.c
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include "esp.h"
+#include "Servo.h"
+
+extern osMutexId_t ESP_MutexHandle;
+extern osMutexId_t NTP_MutexHandle;
+extern time_t ntp_time;
+
+#define NTPTIME_TASK_PERIOD_MS 20000
+
+int esp_is_wifi_ready(void);
+
+void NTP_Task(void *argument)
+{
+    static time_t epoch;
+    uint16_t length = 0;
+    TickType_t last = xTaskGetTickCount();
+    const TickType_t period = pdMS_TO_TICKS(NTPTIME_TASK_PERIOD_MS);
+    static int s_ntp_cfg_ok = 0;
+    int toggle = 0;
+
+    for(;;)
+    {
+    	if (!esp_is_wifi_ready()) { vTaskDelay(pdMS_TO_TICKS(2000)); continue; }
+		if (osMutexAcquire(ESP_MutexHandle, osWaitForever) == osOK) {
+			if (!s_ntp_cfg_ok) {
+				if (esp_ntp_config() == 0) s_ntp_cfg_ok = 1;
+				}
+			if (esp_at_command((uint8_t*)"AT+CIPSNTPTIME?\r\n", (uint8_t*)response, &length, 5000) == 0) {
+				char *p = strtok(response, "\r\n");
+				//printf("NTP connected!\r\n");
+				while (p) {
+					if (parse_cipsntptime_line(p, &epoch) == 0) {
+						printf("NTP Time (KST): %s\r", ctime(&epoch));
+						/*
+						toggle = !toggle;
+						if (toggle) {
+							Servo_SetAngle(90);
+							printf("[SERVO TEST] -> 90 deg\r\n");
+						} else {
+							Servo_SetAngle(0);
+							printf("[SERVO TEST] -> 0 deg\r\n");
+						}
+						*/
+						if (osMutexAcquire(NTP_MutexHandle, osWaitForever) == osOK) {
+							ntp_time = epoch;
+							osMutexRelease(NTP_MutexHandle);
+						}
+						break;
+					}
+					p = strtok(NULL, "\r\n");
+				}
+		}
+			osMutexRelease(ESP_MutexHandle);
+		}
+
+        vTaskDelayUntil(&last, period);
+    }
+}
+

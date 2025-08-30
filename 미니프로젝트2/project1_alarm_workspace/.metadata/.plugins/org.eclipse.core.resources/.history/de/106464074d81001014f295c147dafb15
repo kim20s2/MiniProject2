@@ -1,0 +1,2 @@
+#include "app_common.h"
+QueueHandle_t xLcdQueue = NULL;

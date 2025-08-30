@@ -1,0 +1,84 @@
+#include "LCD_Task.h"
+#include "cmsis_os.h"
+#include "app_common.h"
+#include "lcd.h"
+#include <stdio.h>
+#include <string.h>
+
+extern osMessageQueueId_t g_lcdQueue;
+
+// 16자 고정 폭으로 패딩
+static void make_fixed16(char out[17], const char* in) {
+    // 좌측 정렬, 남는 칸은 공백
+    snprintf(out, 17, "%-16s", in);
+    out[16] = '\0';
+}
+
+// 바뀐 구간만 덮어쓰기 (라인 클리어 금지!)
+static void lcd_update_line(uint8_t row, char new16[17], char prev16[17]) {
+    if (memcmp(prev16, new16, 16) == 0) return; // 동일하면 아무 것도 안 함
+
+    // 첫 번째 차이 위치 탐색
+    int start = 0;
+    while (start < 16 && prev16[start] == new16[start]) start++;
+
+    // 마지막 차이 뒤(미포함) 위치 탐색
+    int end = 15;
+    while (end >= start && prev16[end] == new16[end]) end--;
+
+    // 바뀐 부분만 커서 이동 후 덮어쓰기
+    LCD_SetCursor(row, (uint8_t)start);
+    // 필요한 부분만 출력
+    char segment[17] = {0};
+    int len = end - start + 1;
+    memcpy(segment, &new16[start], len);
+    segment[len] = '\0';
+    LCD_Print(segment);
+
+    // 캐시 갱신
+    memcpy(prev16, new16, 16);
+}
+
+void LCD_Task(void *argument)
+{
+    (void)argument;
+    app_msg_t msg;
+
+    // 부팅 1회만 초기화/클리어
+    LCD_Init();
+    LCD_Clear();
+
+    // 캐시 버퍼(이전 표시 내용)
+    char prev1[17] = "                ";
+    char prev2[17] = "                ";
+
+    // 최초 화면
+    char line1_16[17], line2_16[17];
+    make_fixed16(line1_16, "Normal");
+    make_fixed16(line2_16, "G:0   V:0 F:0");
+    lcd_update_line(0, line1_16, prev1);
+    lcd_update_line(1, line2_16, prev2);
+
+    for(;;) {
+        if (osMessageQueueGet(g_lcdQueue, &msg, NULL, osWaitForever) == osOK) {
+            // 1행: 상태
+            char line1[32];
+            switch (msg.type) {
+               case EVT_GAS_ALARM: snprintf(line1, sizeof(line1), "ALARM: GAS"); break;
+               case EVT_VIB_ALARM: snprintf(line1, sizeof(line1), "ALARM: VIB"); break;
+               case EVT_FLM_ALARM: snprintf(line1, sizeof(line1), "ALARM: FLM"); break;
+               default:            snprintf(line1, sizeof(line1), "Normal");     break;
+            }
+            make_fixed16(line1_16, line1);
+
+            // 2행: 값 (고정 폭으로)
+            char line2[32];
+            snprintf(line2, sizeof(line2), "PIR: %s", msg.pir ? "DETECT" : "NONE");
+            make_fixed16(line2_16, line2);
+
+            // ★ 깜빡임 없이 바뀐 부분만 갱신
+            lcd_update_line(0, line1_16, prev1);
+            lcd_update_line(1, line2_16, prev2);
+        }
+    }
+}

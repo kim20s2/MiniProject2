@@ -1,0 +1,30 @@
+/*
+ * lcd_i2c.h
+ *
+ *  Created on: Aug 22, 2025
+ *      Author: kim20
+ */
+
+#ifndef INC_LCD_I2C_H_
+#define INC_LCD_I2C_H_
+
+#include "main.h"
+#include <stdarg.h>
+
+#ifndef LCD_I2C_ADDR_7BIT
+#define LCD_I2C_ADDR_7BIT 0x27   // 스캐너 결과로 0x27 또는 0x3F로 바꿔주세요
+#endif
+
+// 백팩 핀맵 타입: 보통 둘 중 하나입니다.
+typedef enum {
+    LCD_PINMAP_A = 0, // P0=D4,P1=D5,P2=D6,P3=D7,P4=BL,P5=EN,P6=RW,P7=RS
+    LCD_PINMAP_B = 1  // P0=RS,P1=RW,P2=EN,P3=BL,P4=D4,P5=D5,P6=D6,P7=D7
+} lcd_pinmap_t;
+
+void lcd_init(I2C_HandleTypeDef *hi2c, lcd_pinmap_t map);
+void lcd_clear(void);
+void lcd_home(void);
+void lcd_goto(uint8_t row, uint8_t col); // row:0/1, col:0~15
+void lcd_write(const char *s);
+void lcd_printf(const char *fmt, ...);
+#endif

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section name="Workbench">
+	<item key="hasShownOverlayPopupBefore" value="true"/>
+	<item key="replaceBarOpen" value="false"/>
+	<list key="searchhistory">
+		<item value="esp_send"/>
+		<item value="time"/>
+		<item value="SETON"/>
+		<item value="recvbuf"/>
+		<item value="OK"/>
+		<item value="got"/>
+		<item value="LED1_ON"/>
+		<item value="want_on"/>
+		<item value="payload[str"/>
+		<item value="payload"/>
+		<item value="LED_OFF"/>
+		<item value="LED_FF"/>
+		<item value="led_on()"/>
+		<item value="rh"/>
+		<item value="weather_mut"/>
+	</list>
+</section>

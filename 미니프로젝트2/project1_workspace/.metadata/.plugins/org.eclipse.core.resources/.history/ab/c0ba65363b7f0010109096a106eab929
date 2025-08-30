@@ -1,0 +1,75 @@
+// =============================
+// Servo_Task.c
+// =============================
+#include "cmsis_os.h"
+#include "main.h"
+#include <math.h>
+#include <stdio.h>
+
+// TIM1 핸들 및 WEATHER 공유 변수
+extern TIM_HandleTypeDef htim1;
+extern osMutexId_t WEATHER_MutexHandle;
+extern volatile int   g_pty;   // Weather_Task에서 갱신: 0=없음, 1~7=강수
+
+// --- 각도/펄스 설정 ----------------------------
+#define SERVO_MIN_US      1000   // 0도 ≈ 1.0ms
+#define SERVO_MAX_US      2000   // 180도 ≈ 2.0ms
+#define SERVO_MIN_DEG     0.0f
+#define SERVO_MAX_DEG     180.0f
+
+// 날씨별 목표 각도 (원하시면 여기만 수정)
+#define SERVO_ANGLE_DRY    0.0f   // 비/눈 없음
+#define SERVO_ANGLE_WET   90.0f   // 비/눈 있음
+
+// --- 내부 유틸 -------------------------------
+static inline uint16_t clamp_u16(int v, int lo, int hi) {
+    if (v < lo) return (uint16_t)lo;
+    if (v > hi) return (uint16_t)hi;
+    return (uint16_t)v;
+}
+
+// 1us 타이머(PSC=83, ARR=19999 가정): CCR=us
+static void servo_set_pulse_us(uint16_t us) {
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, us);
+}
+
+// 0~180도 → 1000~2000us
+void servo_set_angle(float deg) {
+    if (deg < SERVO_MIN_DEG) deg = SERVO_MIN_DEG;
+    if (deg > SERVO_MAX_DEG) deg = SERVO_MAX_DEG;
+    float ratio = (deg - SERVO_MIN_DEG) / (SERVO_MAX_DEG - SERVO_MIN_DEG);
+    int pulse = (int)roundf(SERVO_MIN_US + ratio * (SERVO_MAX_US - SERVO_MIN_US));
+    servo_set_pulse_us(clamp_u16(pulse, SERVO_MIN_US, SERVO_MAX_US));
+}
+
+// 약간의 디바운스/불필요한 갱신 방지
+static inline int is_precip_now(void) {
+    int p = -1;
+    if (osMutexAcquire(WEATHER_MutexHandle, pdMS_TO_TICKS(50)) == osOK) {
+        p = g_pty;
+        osMutexRelease(WEATHER_MutexHandle);
+    }
+    return (p > 0); // 0=없음, 1~7=강수
+}
+
+void Servo_Task(void *argument)
+{
+    // 첫 위치(현재 날씨 기준)
+    int wet = is_precip_now();
+    float target = wet ? SERVO_ANGLE_WET : SERVO_ANGLE_DRY;
+    servo_set_angle(target);
+
+    // 메인 루프
+    int lastWet = wet;
+    for (;;) {
+        wet = is_precip_now();
+        if (wet != lastWet) {
+            target = wet ? SERVO_ANGLE_WET : SERVO_ANGLE_DRY;
+            servo_set_angle(target);
+            // (선택) 디버깅 출력
+            // printf("[SERVO] %s -> angle=%.1f\n", wet ? "WET" : "DRY", target);
+            lastWet = wet;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500)); // 0.5s마다 확인
+    }
+}

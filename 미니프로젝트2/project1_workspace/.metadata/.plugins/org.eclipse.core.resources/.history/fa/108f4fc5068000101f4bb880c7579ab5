@@ -1,0 +1,47 @@
+#include "rtc.h"
+
+RTC_HandleTypeDef hrtc;
+
+void MX_RTC_Init(void)
+{
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
+
+    /* LSI On (외부 LSE 없을 때 안전) */
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI;
+    RCC_OscInitStruct.LSIState       = RCC_LSI_ON;
+    RCC_OscInitStruct.PLL.PLLState   = RCC_PLL_NONE;
+    HAL_RCC_OscConfig(&RCC_OscInitStruct);
+
+    /* RTC clock source = LSI */
+    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+    PeriphClkInitStruct.RTCClockSelection    = RCC_RTCCLKSOURCE_LSI;
+    HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct);
+
+    __HAL_RCC_RTC_ENABLE();
+
+    hrtc.Instance = RTC;
+    hrtc.Init.HourFormat     = RTC_HOURFORMAT_24;
+    hrtc.Init.AsynchPrediv   = 127;  // 1Hz 근사 (LSI ~32kHz)
+    hrtc.Init.SynchPrediv    = 255;
+    hrtc.Init.OutPut         = RTC_OUTPUT_DISABLE;
+    hrtc.Init.OutPutRemap    = RTC_OUTPUT_REMAP_NONE;
+    hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+    hrtc.Init.OutPutType     = RTC_OUTPUT_TYPE_OPENDRAIN;
+    HAL_RTC_Init(&hrtc);
+}
+
+void HAL_RTC_MspInit(RTC_HandleTypeDef* rtcHandle)
+{
+    if (rtcHandle->Instance == RTC) {
+        __HAL_RCC_RTC_ENABLE();
+        /* NVIC 사용 시 여기서 설정 가능 */
+    }
+}
+
+void HAL_RTC_MspDeInit(RTC_HandleTypeDef* rtcHandle)
+{
+    if (rtcHandle->Instance == RTC) {
+        __HAL_RCC_RTC_DISABLE();
+    }
+}

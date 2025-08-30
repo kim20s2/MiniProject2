@@ -1,0 +1,38 @@
+/*
+ * Common_Task.h
+ *
+ *  Created on: Aug 19, 2025
+ *      Author: kim20
+ */
+
+#ifndef INC_COMMON_TASKS_H
+#define INC_COMMON_TASKS_H
+#include "cmsis_os2.h"
+#include "main.h"
+#include <stdint.h>
+#include <stdbool.h>
+
+// 전역 핸들/뮤텍스 (main.c에서 생성된 것을 extern)
+extern osMutexId_t ESP_MutexHandle;
+extern osMutexId_t NTP_MutexHandle;
+
+// ESP 수신 공유버퍼/상태 (이미 사용 중인 구조체를 extern)
+typedef struct {
+    volatile uint8_t  buf[MAX_ESP_RX_BUFFER];
+    volatile uint16_t length;
+    volatile uint8_t  new_data;
+} cb_data_t;
+
+extern cb_data_t cb_data;
+
+// UART 핸들(ESP)
+extern UART_HandleTypeDef huart6;
+
+// 공용 유틸(필요시)
+int esp_read_line(char *buf, int buf_size, int timeout_ms);
+
+// 앱 전역상태 (예: NTP 시각 공유)
+extern time_t ntp_time;
+
+#endif
+/* INC_COMMON_TASK_H_ */

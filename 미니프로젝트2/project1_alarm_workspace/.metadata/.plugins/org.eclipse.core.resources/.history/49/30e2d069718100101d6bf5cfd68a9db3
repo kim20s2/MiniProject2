@@ -1,0 +1,52 @@
+#include "LCD_Task.h"
+#include "cmsis_os.h"
+#include "app_common.h"
+#include "lcd.h"
+#include <stdio.h>
+#include <string.h>
+
+extern osMessageQueueId_t g_lcdQueue;
+
+static inline void lcd_print_line(uint8_t row, const char* s) {
+    char buf[17];
+    // 16칸 클리어용 공백
+    LCD_SetCursor(row, 0);
+    LCD_Print("                ");
+    // 내용 프린트(최대 16)
+    snprintf(buf, sizeof(buf), "%-16s", s);
+    LCD_SetCursor(row, 0);
+    LCD_Print(buf);
+}
+
+void LCD_Task(void *argument)
+{
+    (void)argument;
+    app_msg_t msg;
+
+    LCD_Init();
+    LCD_Clear();
+    lcd_print_line(0, "Normal");
+    lcd_print_line(1, "G:0   V:0 F:0");
+
+    for(;;) {
+        if (osMessageQueueGet(g_lcdQueue, &msg, NULL, osWaitForever) == osOK) {
+            char line1[17], line2[17];
+
+            // 1행: 상태
+            switch (msg.type) {
+                case EVT_GAS_ALARM: snprintf(line1, sizeof(line1), "ALARM: GAS"); break;
+                case EVT_VIB_ALARM: snprintf(line1, sizeof(line1), "ALARM: VIB"); break;
+                case EVT_FLM_ALARM: snprintf(line1, sizeof(line1), "ALARM: FLM"); break;
+                default:            snprintf(line1, sizeof(line1), "Normal");     break;
+            }
+
+            // 2행: 값(가스=ADC 0~4095, 진동/플레임=디지털 0/1)
+            snprintf(line2, sizeof(line2), "G:%4u V:%1u F:%1u",
+                     (unsigned)msg.gas, (unsigned)msg.vib, (unsigned)msg.flm);
+
+            // 각 행을 항상 정확 위치에 덮어쓰기
+            lcd_print_line(0, line1);
+            lcd_print_line(1, line2);
+        }
+    }
+}

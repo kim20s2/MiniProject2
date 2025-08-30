@@ -1,0 +1,86 @@
+#include "lcd_i2c.h"
+#include <stdio.h>
+#include <string.h>
+
+static I2C_HandleTypeDef *s_hi2c;
+static uint8_t s_backlight = 0x00;
+static lcd_pinmap_t s_map;
+
+static uint8_t mask_RS, mask_RW, mask_EN, mask_BL;
+static uint8_t shift_D4; // 상위니블에 실을 때 쓸 시프트
+
+// map에 따라 비트 위치 세팅
+static void set_map(lcd_pinmap_t map) {
+    s_map = map;
+    if (map == LCD_PINMAP_A) {
+        // P4=BL, P5=EN, P6=RW, P7=RS / P0~P3 = D4~D7
+        mask_BL = (1<<4); mask_EN = (1<<5); mask_RW = (1<<6); mask_RS = (1<<7);
+        shift_D4 = 0; // nibble 그대로 상위로 보낼 것
+    } else {
+        // P3=BL, P2=EN, P1=RW, P0=RS / P4~P7 = D4~D7
+        mask_BL = (1<<3); mask_EN = (1<<2); mask_RW = (1<<1); mask_RS = (1<<0);
+        shift_D4 = 4; // D4~D7를 상위로 올리기 위해 <<4
+    }
+}
+
+static void i2c_send(uint8_t data) {
+    HAL_I2C_Master_Transmit(s_hi2c, (LCD_I2C_ADDR_7BIT<<1), &data, 1, 20);
+}
+
+static void strobe(uint8_t data) {
+    i2c_send(data | s_backlight | mask_EN);
+    HAL_Delay(1);
+    i2c_send((data | s_backlight) & ~mask_EN);
+    HAL_Delay(1);
+}
+
+static void write4(uint8_t nibble, uint8_t rs) {
+    // nibble(상위 4비트 사용) → D4~D7 위치로 이동
+    uint8_t d = (shift_D4==0) ? (nibble & 0xF0) : ((nibble & 0xF0) >> 4);
+    if (shift_D4) d <<= 4;
+    if (rs) d |= mask_RS;
+    i2c_send(d | s_backlight);
+    strobe(d | (rs?mask_RS:0));
+}
+
+static void cmd(uint8_t c) {
+    write4(c & 0xF0, 0);
+    write4((c<<4) & 0xF0, 0);
+}
+static void dat(uint8_t c) {
+    write4(c & 0xF0, 1);
+    write4((c<<4) & 0xF0, 1);
+}
+
+void lcd_init(I2C_HandleTypeDef *hi2c, lcd_pinmap_t map) {
+    s_hi2c = hi2c;
+    set_map(map);
+    s_backlight = (map==LCD_PINMAP_A ? (1<<4) : (1<<3)); // BL ON
+    HAL_Delay(50);
+
+    // 4-bit init
+    // Function set 시퀀스 (상위니블로 0x30,0x30,0x20)
+    write4(0x30, 0); HAL_Delay(5);
+    write4(0x30, 0); HAL_Delay(5);
+    write4(0x20, 0); HAL_Delay(5);
+
+    cmd(0x28); // 4-bit, 2라인, 5x8
+    cmd(0x0C); // 디스플레이 ON, 커서/블링크 OFF
+    cmd(0x06); // 엔트리 모드
+    lcd_clear();
+}
+
+void lcd_clear(void) { cmd(0x01); HAL_Delay(2); }
+void lcd_home(void)  { cmd(0x02); HAL_Delay(2); }
+void lcd_goto(uint8_t row, uint8_t col) {
+    uint8_t addr = (row ? 0x40 : 0x00) + (col & 0x0F);
+    cmd(0x80 | addr);
+}
+void lcd_write(const char *s) { while (*s) dat((uint8_t)*s++); }
+void lcd_printf(const char *fmt, ...) {
+    char buf[32];
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    lcd_write(buf);
+}

@@ -1,0 +1,32 @@
+// =============================
+// aiot_task.c
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include "esp.h"
+
+extern osMutexId_t ESP_MutexHandle;
+
+int esp_is_wifi_ready(void);
+
+void Aiot_Task(void *argument)
+{
+    // ★ RTOS 시작 이후엔 반드시 뮤텍스로 ESP 접근
+    for(;;)
+    {
+        if (!esp_is_wifi_ready()) {           // AP+IP 준비됐는지
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
+        }
+
+        if (esp_get_status() != 0) {          // TCP 세션 없으면만
+            printf("server connecting ...\r\n");
+            if (osMutexAcquire(ESP_MutexHandle, osWaitForever) == osOK) {
+                esp_client_conn();            // 아래 2)에서 강화
+                osMutexRelease(ESP_MutexHandle);
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}

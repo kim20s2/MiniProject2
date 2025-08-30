@@ -1,0 +1,52 @@
+// Core/Src/PIR_Task.c
+#include "cmsis_os.h"
+#include "stm32f4xx_hal.h"
+#include "LED_FAN.h"   // LED_ON/OFF, FAN_ON/OFF 매크로
+#include <stdbool.h>
+#include <stdio.h>
+
+#define PIR_GPIO_Port   GPIOA
+#define PIR_Pin         GPIO_PIN_10
+
+void PIR_Task(void *argument)
+{
+    // 센서 워밍업 (HC-SR501 권장 30~60s)
+    osDelay(30000);
+
+    const TickType_t period = pdMS_TO_TICKS(50); // 50ms 폴링
+    TickType_t last_wake = osKernelGetTickCount();
+    TickType_t last_motion = 0;
+
+    bool is_on = false;
+    uint8_t hi_cnt = 0, lo_cnt = 0;
+    const uint8_t HI_THR = 2; // 100ms 이상 High면 감지
+    const uint8_t LO_THR = 2; // 100ms 이상 Low면 미감지
+
+    for (;;)
+    {
+        GPIO_PinState s = HAL_GPIO_ReadPin(PIR_GPIO_Port, PIR_Pin);
+        if (s == GPIO_PIN_SET) { if (hi_cnt < 255) hi_cnt++; lo_cnt = 0; }
+        else                   { if (lo_cnt < 255) lo_cnt++; hi_cnt = 0; }
+
+        // 감지되면 즉시 ON
+        if (hi_cnt >= HI_THR) {
+            last_motion = osKernelGetTickCount();
+            if (!is_on) {
+                LED_ON();
+                FAN_ON();
+                is_on = true;
+            }
+        }
+
+        // 30초 동안 추가 감지 없으면 OFF
+        if (is_on) {
+            if ((osKernelGetTickCount() - last_motion) >= pdMS_TO_TICKS(30000)) {
+                FAN_OFF();
+                LED_OFF();
+                is_on = false;
+            }
+        }
+
+        osDelayUntil(&last_wake, period);
+    }
+}

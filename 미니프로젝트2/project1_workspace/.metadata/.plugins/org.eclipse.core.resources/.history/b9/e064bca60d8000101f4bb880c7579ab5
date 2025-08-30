@@ -1,0 +1,78 @@
+// LCD_Task.c (경합 최소/비블로킹 버전)
+
+#include "cmsis_os.h"
+#include <stdio.h>
+#include <string.h>
+
+#include "main.h"
+
+// Weather_Task 가 갱신하는 '읽기 전용' 캐시 (volatile)
+extern volatile float g_t1h;  // 예: 27.3
+extern volatile int   g_reh;  // -1 이면 아직 모름
+extern volatile int   g_pty;  // -1 이면 아직 모름
+
+/*
+static void lcd_line16(uint8_t row, const char *s)
+{
+    char buf[17];
+    size_t n = 0;
+
+    // 16칸 내에서 안전하게 복사 (sequence-point 문제 없음)
+    while (n < 16 && s && s[n]) {
+        buf[n] = s[n];
+        n++;
+    }
+    while (n < 16) buf[n++] = ' ';
+    buf[16] = '\0';
+
+    LCD_SetCursor(row, 0);   // (row, col) 순서 주의
+    LCD_Print(buf);
+}
+
+static const char* pty_short(int code){
+    switch(code){case 0:return "맑";case 1:return "비";case 2:return "비/눈";
+    case 3:return "눈";case 4:return "소나";default:return "--";}
+}
+
+void LCD_Task(void *argument)
+{
+    LCD_Init(&hi2c1);
+    LCD_Clear();
+    lcd_line16(0, "NTP/LCD READY");
+    lcd_line16(1, "WAIT WEATHER...");
+
+    TickType_t last = xTaskGetTickCount();
+    char line1[17], prev1[17]={0};
+    char line2[17], prev2[17]={0};
+    int sec30 = 0;
+
+    for(;;){
+        // 1) 시간: 1초마다
+        RTC_TimeTypeDef t; RTC_DateTypeDef d;
+        HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BIN);
+        HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BIN);
+        snprintf(line1, sizeof(line1), "%02u:%02u:%02u", t.Hours,t.Minutes,t.Seconds);
+        if (strncmp(prev1,line1,16)!=0){ lcd_line16(0,line1); strncpy(prev1,line1,16); }
+
+        // 2) 날씨: 30초마다 (뮤텍스 없이 '읽기만')
+        if (++sec30>=30){
+            sec30=0;
+            float t1h=g_t1h; int reh=g_reh; int pty=g_pty;
+            if (reh>=0 && pty>=0)
+                snprintf(line2,sizeof(line2),"%2dC RH%2d %-3s",(int)t1h,reh,pty_short(pty));
+            else
+                snprintf(line2,sizeof(line2),"--C RH-- --");
+            if (strncmp(prev2,line2,16)!=0){ lcd_line16(1,line2); strncpy(prev2,line2,16); }
+        }
+
+        // ★ 정확히 1초 페이싱(바쁘게 돌지 않도록)
+        vTaskDelayUntil(&last, pdMS_TO_TICKS(1000));
+    }
+}
+*/
+void LCD_Task(void *argument)
+{
+	for(;;) {
+	        vTaskDelay(pdMS_TO_TICKS(50)); // 최소 양보
+	    }
+}

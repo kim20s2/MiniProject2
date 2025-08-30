@@ -1,0 +1,35 @@
+#include "Lcd_Task.h"
+#include "app_common.h"
+
+// 프로젝트의 LCD 드라이버 심볼에 맞게 선언/링크
+void LCD_Init_I2C(I2C_HandleTypeDef *hi2c, uint8_t addr);
+void LCD_Clear(void);
+void LCD_SetCursor(uint8_t col, uint8_t row);
+void LCD_Print(const char *s);
+
+void LCD_Task(void *argument)
+{
+    (void)argument;
+    LCD_Init_I2C(&hi2c1, 0x27);  // 0x27/0x3F 확인
+    LCD_Clear();
+
+    // 부팅 메시지
+    lcd_msg_t boot;
+    copy16(boot.line1, "System Ready");
+    copy16(boot.line2, "Gas/Vibe watch");
+    LCD_SetCursor(0,0); LCD_Print(boot.line1);
+    LCD_SetCursor(0,1); LCD_Print(boot.line2);
+
+    lcd_msg_t m;
+    for (;;)
+    {
+        if (xQueueReceive(xLcdQueue, &m, portMAX_DELAY) == pdPASS) {
+            LCD_Clear();
+            LCD_SetCursor(0,0); LCD_Print(m.line1);
+            LCD_SetCursor(0,1); LCD_Print(m.line2);
+        }
+    }
+}
+
+
+

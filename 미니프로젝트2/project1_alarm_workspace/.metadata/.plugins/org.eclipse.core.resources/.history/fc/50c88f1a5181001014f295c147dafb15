@@ -1,0 +1,91 @@
+#include "BT_Task.h"
+#include "main.h"
+#include <string.h>
+#include <stdio.h>
+
+// ===== 외부 UART 핸들 (CubeMX 생성) =====
+extern UART_HandleTypeDef huart6;  // BT 전용 (PC6/PC7)
+extern UART_HandleTypeDef huart2;  // printf 출력(USART2)
+
+// ===== 심플 전역 버퍼/플래그 =====
+static volatile uint8_t  s_rx_byte;
+static volatile uint8_t  s_line_ready = 0;
+static char              s_line[64];
+static size_t            s_idx = 0;
+
+// 1바이트 인터럽트 수신 시작
+void BT_UART6_StartIT(void) {
+  s_idx = 0;
+  s_line_ready = 0;
+  HAL_UART_Receive_IT(&huart6, (uint8_t*)&s_rx_byte, 1);
+}
+
+// IRQ 콜백(한 파일에서만 정의되도록 주의)
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if(huart->Instance == USART6)
+    {
+    	static int i=0;
+    	btData[i] = btchar;
+    	if((btData[i] == '\n') || btData[i] == '\r')
+    	{
+    		btData[i] = '\0';
+    		btFlag = 1;
+    		i = 0;
+    	}
+    	else
+    	{
+    		i++;
+    	}
+    	HAL_UART_Receive_IT(&huart6, &btchar,1);
+    }
+}
+
+// 간단 송신 헬퍼
+static inline void bt_puts(const char *s) {
+  HAL_UART_Transmit(&huart6, (uint8_t*)s, strlen(s), HAL_MAX_DELAY);
+}
+
+// 아주 단순한 커맨드 처리: LED, PING, LCD 알람 트리거 등
+static void handle_line(const char *raw)
+{
+  // 트림
+  char buf[64];
+  size_t n = strlen(raw);
+  while (n && (raw[n-1]=='\r' || raw[n-1]=='\n' || raw[n-1]==' ')) n--;
+  if (n >= sizeof(buf)) n = sizeof(buf)-1;
+  memcpy(buf, raw, n); buf[n] = '\0';
+
+  // 예: "PING", "LED@ON", "LED@OFF"
+  if (strcasecmp(buf, "PING") == 0) {
+    bt_puts("PONG\r\n");
+  } else if (strcasecmp(buf, "LED@ON") == 0) {
+    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_SET);
+    bt_puts("LED ON\r\n");
+  } else if (strcasecmp(buf, "LED@OFF") == 0) {
+    HAL_GPIO_WritePin(LD2_GPIO_Port, LD2_Pin, GPIO_PIN_RESET);
+    bt_puts("LED OFF\r\n");
+  } else {
+    // 그대로 에코
+    bt_puts("ECHO: "); bt_puts(buf); bt_puts("\r\n");
+  }
+
+  // 필요하면 여기서 LCD 큐로 메시지도 보낼 수 있어요:
+  //  - "LCD@ALARM" -> LCD에 ALARM 문구 표시
+  //  - "LCD@CLEAR" -> NORMAL 문구
+  // (xLcdQueue 사용 중이면 몇 줄만 추가하면 됩니다.)
+}
+
+void BT_Task(void *argument)
+{
+  (void)argument;
+  bt_puts("BT Ready (USART6)\r\n");  // 시작 알림
+
+  for (;;) {
+    if (s_line_ready) {
+      s_line_ready = 0;
+      handle_line((const char*)s_line);
+    }
+    osDelay(10); // 가벼운 폴링
+  }
+}

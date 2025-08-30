@@ -1,0 +1,3 @@
+../Core/Inc/LED_FAN.h:23:20:FAN_ON	8	static
+../Core/Inc/LED_FAN.h:24:20:FAN_OFF	8	static
+../Core/Src/TH_Task.c:8:6:TH_Task	24	static

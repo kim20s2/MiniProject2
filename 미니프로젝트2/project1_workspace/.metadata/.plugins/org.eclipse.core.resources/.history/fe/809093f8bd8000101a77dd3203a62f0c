@@ -1,0 +1,55 @@
+#include "cmsis_os2.h"
+#include "stm32f4xx_hal.h"
+#include "LED_FAN.h"
+#include "PIR_Task.h"
+#include <stdbool.h>
+#include "time.h"
+
+#define PIR_GPIO_Port GPIOA
+#define PIR_Pin       GPIO_PIN_10
+
+void PIR_Task(void *argument)
+{
+    osDelay(30000);  // HC-SR501 워밍업
+
+    const uint32_t period = pdMS_TO_TICKS(50);  // 50ms 주기
+    uint32_t next_wake = osKernelGetTickCount() + period;
+
+    uint32_t last_motion = 0;
+    bool is_on = false;
+    uint8_t hi_cnt = 0;           // 디바운싱용 High 연속 카운트
+    const uint8_t HI_THR = 2;     // 2*50ms=100ms 이상 High면 감지로 인정
+
+    for (;;)
+    {
+        // 입력 읽기 + 디바운싱
+        if (HAL_GPIO_ReadPin(PIR_GPIO_Port, PIR_Pin) == GPIO_PIN_SET) {
+            if (hi_cnt < 255) hi_cnt++;
+        } else {
+            hi_cnt = 0;
+        }
+
+        // 감지되면 즉시 ON
+        if (hi_cnt >= HI_THR) {
+            last_motion = osKernelGetTickCount();
+            if (!is_on) {
+                LED_ON();
+                FAN_ON();
+                is_on = true;
+            }
+        }
+
+        // 30초 추가 감지 없으면 OFF
+        if (is_on) {
+            if ((osKernelGetTickCount() - last_motion) >= pdMS_TO_TICKS(30000)) {
+                FAN_OFF();
+                LED_OFF();
+                is_on = false;
+            }
+        }
+
+        // CMSIS v2의 osDelayUntil: "다음 절대 tick" 1개만 인자로 준다
+        osDelayUntil(next_wake);
+        next_wake += period;   // 다음 주기 갱신
+    }
+}

@@ -1,0 +1,33 @@
+// =============================
+// aiot_task.c
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include "esp.h"
+
+extern osMutexId_t ESP_MutexHandle;
+
+// Aiot_Task.c
+extern int esp_is_wifi_ready(void);  // 아래 3)에서 추가한 함수
+
+void Aiot_Task(void *argument)
+{
+    AiotClient_Init();
+    for(;;)
+    {
+        if (!esp_is_wifi_ready()) {
+            // AP 붙을 때까지 대기
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            continue;
+        }
+
+        if (esp_get_status() != 0) {          // TCP 세션이 없을 때만
+            printf("server connecting ...\r\n");
+            if (osMutexAcquire(ESP_MutexHandle, osWaitForever) == osOK) {
+                esp_client_conn();
+                osMutexRelease(ESP_MutexHandle);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}

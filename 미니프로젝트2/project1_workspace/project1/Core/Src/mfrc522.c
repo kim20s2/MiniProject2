@@ -1,0 +1,220 @@
+#include "mfrc522.h"
+#include <string.h>
+
+// ===== 로컬 유틸 =====
+static inline void CS_LOW(void)  { HAL_GPIO_WritePin(MFRC522_CS_GPIO_Port,  MFRC522_CS_Pin,  GPIO_PIN_RESET); }
+static inline void CS_HIGH(void) { HAL_GPIO_WritePin(MFRC522_CS_GPIO_Port,  MFRC522_CS_Pin,  GPIO_PIN_SET);   }
+static inline void RST_LOW(void) { HAL_GPIO_WritePin(MFRC522_RST_GPIO_Port, MFRC522_RST_Pin, GPIO_PIN_RESET); }
+static inline void RST_HIGH(void){ HAL_GPIO_WritePin(MFRC522_RST_GPIO_Port, MFRC522_RST_Pin, GPIO_PIN_SET);   }
+
+static void     SetBitMask(uint8_t reg, uint8_t mask);
+static void     ClearBitMask(uint8_t reg, uint8_t mask);
+static void     PCD_Reset(void);
+static uint8_t  PCD_ToCard(uint8_t command, uint8_t *sendData, uint8_t sendLen,
+                           uint8_t *backData, uint16_t *backLen);
+static void     MFRC522_CalcCRC(uint8_t *data, uint8_t len, uint8_t *out);
+
+
+// ===== 레지스터 R/W =====
+uint8_t MFRC522_ReadReg(uint8_t reg)
+{
+    uint8_t addr = ((reg << 1) & 0x7E) | 0x80; // read bit=1
+    uint8_t rx=0, dummy=0;
+    CS_LOW();
+    HAL_SPI_Transmit(&hspi1, &addr, 1, 10);
+    HAL_SPI_TransmitReceive(&hspi1, &dummy, &rx, 1, 10);
+    CS_HIGH();
+    return rx;
+}
+
+void MFRC522_WriteReg(uint8_t reg, uint8_t val)
+{
+    uint8_t addr = ((reg << 1) & 0x7E); // write bit=0
+    CS_LOW();
+    HAL_SPI_Transmit(&hspi1, &addr, 1, 10);
+    HAL_SPI_Transmit(&hspi1, &val, 1, 10);
+    CS_HIGH();
+}
+
+// ===== 초기화 =====
+void MFRC522_Init(void)
+{
+    // 핀 기본 상태
+    CS_HIGH();
+    RST_HIGH();
+    HAL_Delay(50);
+
+    PCD_Reset();
+
+    // Timer: TModeReg, TPrescalerReg, TReloadReg 설정 (표준)
+    MFRC522_WriteReg(TModeReg,      0x8D);   // TAuto=1, TAutoRestart
+    MFRC522_WriteReg(TPrescalerReg, 0x3E);
+    MFRC522_WriteReg(TReloadRegL,   30);
+    MFRC522_WriteReg(TReloadRegH,   0);
+
+    MFRC522_WriteReg(TxASKReg,      0x40);   // 强制100%ASK
+    MFRC522_WriteReg(ModeReg,       0x3D);   // CRC 초기값 0x6363
+
+    MFRC522_AntennaOn();
+}
+
+static void PCD_Reset(void)
+{
+    MFRC522_WriteReg(CommandReg, PCD_SoftReset);
+    HAL_Delay(50);
+    // 일부 보드에서 RST 핀을 실제로 Low/High 토글해야 할 수 있음
+    // RST_LOW(); HAL_Delay(2); RST_HIGH(); HAL_Delay(50);
+}
+
+void MFRC522_AntennaOn(void)
+{
+    uint8_t v = MFRC522_ReadReg(TxControlReg);
+    if (!(v & 0x03)) {
+        MFRC522_WriteReg(TxControlReg, v | 0x03);
+    }
+}
+
+void MFRC522_AntennaOff(void)
+{
+    ClearBitMask(TxControlReg, 0x03);
+}
+
+// ===== 비트 마스크 =====
+static void SetBitMask(uint8_t reg, uint8_t mask)
+{
+    uint8_t tmp = MFRC522_ReadReg(reg);
+    MFRC522_WriteReg(reg, tmp | mask);
+}
+
+static void ClearBitMask(uint8_t reg, uint8_t mask)
+{
+    uint8_t tmp = MFRC522_ReadReg(reg);
+    MFRC522_WriteReg(reg, tmp & (~mask));
+}
+
+// ===== CRC 계산 =====
+static void MFRC522_CalcCRC(uint8_t *data, uint8_t len, uint8_t *out)
+{
+    MFRC522_WriteReg(CommandReg, PCD_Idle);
+    MFRC522_WriteReg(DivIrqReg,  0x04); // CRCIrq=1 clear
+    MFRC522_WriteReg(FIFOLevelReg, 0x80);
+
+    for (uint8_t i=0;i<len;i++) MFRC522_WriteReg(FIFODataReg, data[i]);
+    MFRC522_WriteReg(CommandReg, PCD_CalcCRC);
+
+    // 완료 대기
+    for (uint16_t i=0; i<0xFF; i++) {
+        uint8_t n = MFRC522_ReadReg(DivIrqReg);
+        if (n & 0x04) break;
+    }
+    out[0] = MFRC522_ReadReg(CRCResultRegL);
+    out[1] = MFRC522_ReadReg(CRCResultRegH);
+}
+
+// ===== 카드와 통신 =====
+static uint8_t PCD_ToCard(uint8_t command, uint8_t *sendData, uint8_t sendLen,
+                          uint8_t *backData, uint16_t *backLen)
+{
+    uint8_t status = MI_ERR;
+    uint8_t irqEn = 0x00;
+    uint8_t waitIRq = 0x00;
+
+    if (command == PCD_MFAuthent) {
+        irqEn   = 0x12;
+        waitIRq = 0x10;
+    } else if (command == PCD_Transceive) {
+        irqEn   = 0x77;
+        waitIRq = 0x30;
+    }
+
+    MFRC522_WriteReg(ComIEnReg, irqEn | 0x80);
+    ClearBitMask(ComIrqReg, 0x80);      // Clear all IRQ
+    SetBitMask(FIFOLevelReg, 0x80);     // Flush FIFO
+    MFRC522_WriteReg(CommandReg, PCD_Idle);
+
+    for (uint8_t i=0;i<sendLen;i++) MFRC522_WriteReg(FIFODataReg, sendData[i]);
+    MFRC522_WriteReg(CommandReg, command);
+    if (command == PCD_Transceive) SetBitMask(BitFramingReg, 0x80); // StartSend
+
+    // 대기
+    uint16_t i = 2000;
+    do {
+        uint8_t n = MFRC522_ReadReg(ComIrqReg);
+        if (n & waitIRq) break;
+        if (n & 0x01)    break; // Timer
+    } while (--i);
+
+    ClearBitMask(BitFramingReg, 0x80);
+
+    if (i) {
+        if (!(MFRC522_ReadReg(ErrorReg) & 0x1B)) {
+            status = MI_OK;
+            if (backData && backLen) {
+                uint8_t n = MFRC522_ReadReg(FIFOLevelReg);
+                uint8_t lastBits = MFRC522_ReadReg(ControlReg) & 0x07;
+                if (lastBits) *backLen = (n-1)*8 + lastBits;
+                else          *backLen =  n   *8;
+
+                // 바이트 단위로 복사
+                uint8_t bytes = (*backLen + 7) / 8;
+                for (uint8_t j=0;j<bytes;j++)
+                    backData[j] = MFRC522_ReadReg(FIFODataReg);
+            }
+        } else status = MI_ERR;
+    } else {
+        status = MI_ERR;
+    }
+    return status;
+}
+
+// ===== 카드 탐지 (REQA/ALL) =====
+uint8_t MFRC522_Request(uint8_t reqMode, uint8_t *ATQA)
+{
+    MFRC522_WriteReg(BitFramingReg, 0x07); // 7bits send
+    uint8_t buf[1] = { reqMode };
+    uint16_t backBits = 0;
+
+    uint8_t status = PCD_ToCard(PCD_Transceive, buf, 1, ATQA, &backBits);
+    if (status != MI_OK || backBits != 0x10) return MI_ERR;
+    return MI_OK;
+}
+
+// ===== 충돌 방지 & UID 읽기 =====
+uint8_t MFRC522_Anticoll(uint8_t *uid)
+{
+    MFRC522_WriteReg(BitFramingReg, 0x00); // 8bits
+
+    uint8_t serBuf[2] = { PICC_ANTICOLL, 0x20 };
+    uint8_t backData[10] = {0};
+    uint16_t backBits = 0;
+
+    uint8_t status = PCD_ToCard(PCD_Transceive, serBuf, 2, backData, &backBits);
+    if (status != MI_OK) return MI_ERR;
+
+    // backData[0..4] (4바이트 UID + BCC)
+    // 간단히 UID만 복사 (앞 5바이트)
+    for (int i=0;i<5;i++) uid[i] = backData[i];
+    return MI_OK;
+}
+
+// ===== 태그 선택 =====
+uint8_t MFRC522_SelectTag(uint8_t *uid)
+{
+    uint8_t buf[9];
+    buf[0] = PICC_SELECTTAG;
+    buf[1] = 0x70;
+    buf[2] = uid[0];
+    buf[3] = uid[1];
+    buf[4] = uid[2];
+    buf[5] = uid[3];
+    buf[6] = uid[4];
+
+    uint8_t crc[2];
+    MFRC522_CalcCRC(buf, 7, crc);
+    buf[7] = crc[0];
+    buf[8] = crc[1];
+
+    uint8_t back[3]={0}; uint16_t backBits=0;
+    uint8_t status = PCD_ToCard(PCD_Transceive, buf, 9, back, &backBits);
+    return (status == MI_OK) ? MI_OK : MI_ERR;
+}

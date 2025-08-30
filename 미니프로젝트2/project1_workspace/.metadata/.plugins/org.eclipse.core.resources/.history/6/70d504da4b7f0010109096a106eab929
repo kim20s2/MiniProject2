@@ -1,0 +1,33 @@
+// =============================
+// aiot_task.c
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include "esp.h"
+
+extern osMutexId_t ESP_MutexHandle;
+
+// Aiot_Task.c
+void Aiot_Task(void *argument)
+{
+    AiotClient_Init();
+
+    for(;;)
+    {
+        if (!esp_has_ip()) {
+            printf("[WIFI] joining AP...\r\n");
+            if (osMutexAcquire(ESP_MutexHandle, osWaitForever) == osOK) {
+                // SSID/PASS는 하드코딩 또는 설정치 사용
+                esp_join_ap_blocking("iotA", "iotA1234", 20000); // 20s
+                osMutexRelease(ESP_MutexHandle);
+            }
+        } else if (esp_get_status() != 0) {
+            printf("server connecting ...\r\n");
+            if (osMutexAcquire(ESP_MutexHandle, osWaitForever) == osOK) {
+                esp_client_conn();
+                osMutexRelease(ESP_MutexHandle);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(3000));
+    }
+}

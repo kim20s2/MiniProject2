@@ -1,0 +1,32 @@
+// Core/Src/TH_Task.c
+#include "cmsis_os.h"
+#include "dht11.h"
+#include "LED_FAN.h"
+#include <stdio.h>
+
+void TH_Task(void *argument)
+{
+    // 초기 지연(전원 안정화)
+    osDelay(2000);
+
+    for(;;){
+        uint8_t t=0, h=0;
+        int rc = DHT11_Read(&t, &h);
+        if (rc == 0) {
+            printf("[DHT11] T=%uC RH=%u%%\r\n", t, h);
+            if (t >= 28) {
+                FAN_ON();
+            } else {
+                FAN_OFF();
+            }
+            // LED도 상태표시 원하면:
+            // (t>=28) ? LED_ON() : LED_OFF();
+        } else {
+            printf("[DHT11] read fail rc=%d\r\n", rc);
+            // 실패 시 팬 유지/정지 정책 선택:
+            // FAN_OFF();
+        }
+
+        osDelay(2000); // 2초 주기 (DHT11은 1~2s 주기 권장)
+    }
+}

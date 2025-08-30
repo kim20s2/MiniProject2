@@ -1,0 +1,48 @@
+// Core/Src/Schedule.c
+#include "cmsis_os2.h"
+#include "Schedule.h"
+#include "LED_FAN.h"
+#include <time.h>
+#include <stdio.h>
+
+static schedule_t g_sched;
+
+void Schedule_Init(void){
+    g_sched.enabled = 0;
+    g_sched.hh = 0;
+    g_sched.mm = 0;
+}
+
+void Schedule_Set(uint8_t hh, uint8_t mm){
+    g_sched.hh = hh;
+    g_sched.mm = mm;
+    g_sched.enabled = 1;
+    printf("[SCHED] today %02u:%02u 예약 등록\r\n", hh, mm);
+}
+
+void Schedule_Clear(void){
+    g_sched.enabled = 0;
+    printf("[SCHED] 예약 해제\r\n");
+}
+
+void Schedule_Task(void *argument)
+{
+    for(;;){
+        if (g_sched.enabled){
+            time_t now = time(NULL);
+            struct tm *k = localtime(&now);
+            if (k){
+                if ((uint8_t)k->tm_hour == g_sched.hh &&
+                    (uint8_t)k->tm_min  == g_sched.mm &&
+                    k->tm_sec < 10) { // 해당 분의 초가 0~9일 때만 트리거
+                    printf("[SCHED] 예약 실행 %02u:%02u\r\n", g_sched.hh, g_sched.mm);
+                    LED1_ON();
+                    LED2_ON();
+                    FAN_ON();
+                    g_sched.enabled = 0;   // ✅ 오늘 실행 후 자동 해제
+                }
+            }
+        }
+        osDelay(10000); // 10초마다 확인
+    }
+}

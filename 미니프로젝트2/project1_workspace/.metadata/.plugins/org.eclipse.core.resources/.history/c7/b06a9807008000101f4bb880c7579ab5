@@ -1,0 +1,39 @@
+// =============================
+// aiot_task.c
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include "esp.h"
+
+extern osMutexId_t ESP_MutexHandle;
+
+int esp_is_wifi_ready(void);
+
+// Aiot_Task.c
+void Aiot_Task(void *argument)
+{
+    AiotClient_Init();
+    for(;;) {
+        int wifi_ok = 0, tcp_ok = -1;
+
+        if (osMutexAcquire(ESP_MutexHandle, osWaitForever)==osOK) {
+            wifi_ok = esp_is_wifi_ready();      // ← 이제 충돌 없음
+            tcp_ok  = esp_get_status();         // ← 이제 충돌 없음
+            osMutexRelease(ESP_MutexHandle);
+        }
+
+        if (!wifi_ok) { vTaskDelay(pdMS_TO_TICKS(2000)); continue; }
+
+        if (tcp_ok != 0) {
+            printf("server connecting ...\r\n");
+            if (osMutexAcquire(ESP_MutexHandle, osWaitForever)==osOK) {
+                int rc = esp_client_conn();
+                osMutexRelease(ESP_MutexHandle);
+                printf("[AIOT] conn rc=%d\r\n", rc);
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}
+
+

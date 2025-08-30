@@ -1,0 +1,51 @@
+// =============================
+// ntp_task.c
+// =============================
+#include "cmsis_os.h"
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include "esp.h"
+
+extern osMutexId_t ESP_MutexHandle;
+extern osMutexId_t NTP_MutexHandle;
+extern time_t ntp_time;
+
+#define NTPTIME_TASK_PERIOD_MS 10000
+
+int esp_is_wifi_ready(void);
+
+void NTP_Task(void *argument)
+{
+    static time_t epoch;
+    uint16_t length = 0;
+    TickType_t last = xTaskGetTickCount();
+    const TickType_t period = pdMS_TO_TICKS(NTPTIME_TASK_PERIOD_MS);
+    static int s_ntp_cfg_ok = 0;
+
+    for(;;)
+    {
+    	// 기존: if (esp_get_status() == 0) { ... } else { reconnect ... }
+    	if (esp_is_wifi_ready()) {
+    	    if (osMutexAcquire(ESP_MutexHandle, osWaitForever) == osOK) {
+    	        if (!s_ntp_cfg_ok) {
+    	            if (esp_ntp_config() == 0) s_ntp_cfg_ok = 1;
+    	        }
+    	        if (esp_at_command((uint8_t*)"AT+CIPSNTPTIME?\r\n",
+    	                           (uint8_t*)response, &length, 5000) == 0) {
+    	            // (이하 동일)
+    	        }
+    	        osMutexRelease(ESP_MutexHandle);
+    	    }
+    	} else {
+    	    // Wi‑Fi 자체가 끊겼을 때만 접속 시도
+    	    if (osMutexAcquire(ESP_MutexHandle, osWaitForever) == osOK) {
+    	        ap_conn_func(SSID, PASS);   // AP 재연결
+    	        osMutexRelease(ESP_MutexHandle);
+    	    }
+    	}
+
+        vTaskDelayUntil(&last, period);
+    }
+}
+

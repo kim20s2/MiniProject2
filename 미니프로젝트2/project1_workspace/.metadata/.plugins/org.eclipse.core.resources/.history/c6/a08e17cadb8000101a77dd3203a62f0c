@@ -1,0 +1,92 @@
+// Core/Src/PIR_Task.c
+#include "cmsis_os2.h"
+#include "stm32f4xx_hal.h"
+#include "LED_FAN.h"
+#include "PIR_Task.h"
+#include "FanHold.h"     // fan_hold 쓰면 포함
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+
+
+
+// ── 보조: ms→tick (CMSIS v2) ──
+static inline uint32_t MS2T(uint32_t ms){
+    return (uint32_t)((((uint64_t)ms) * osKernelGetTickFreq()) / 1000U);
+}
+
+// ── 무감지 타이머 공유 상태 ──
+static volatile uint32_t s_last_motion = 0;  // 마지막 감지/ARM 시각
+
+// 외부에서 RFID로 켠 직후 타이머 ARM하고 싶을 때 호출
+void PIR_ArmIdleTimer(void){
+    s_last_motion = osKernelGetTickCount();
+}
+
+// 보조 함수/변수들은 그대로 (MS2T, s_last_motion, PIR_ArmIdleTimer 등)
+
+void PIR_Task(void *argument)
+{
+    osDelay(30000);  // 워밍업
+
+    const uint32_t period     = MS2T(50);
+    const uint32_t OFF_WINDOW = MS2T(10000);
+    uint32_t next_wake = osKernelGetTickCount() + period;
+
+    uint8_t  hi_cnt = 0, lo_cnt = 0;
+    // 디바운스/재무장 임계
+    const uint8_t HI_THR      = 8;   // 6 * 50ms = 300ms 이상 High면 감지로 인정
+    const uint8_t LO_THR      = 2;   // 100ms (즉시 Lo 판정용)
+    const uint8_t ARM_LO_THR  = 30;  // 20 * 50ms = 1s 이상 Low일 때만 "다음 감지 허용"
+    bool high_blocked = false;
+    bool ready = false;  // 다음 감지를 받을 준비가 되었는지
+
+    for (;;)
+    {
+        uint32_t now = osKernelGetTickCount();
+        GPIO_PinState s = HAL_GPIO_ReadPin(PIR_GPIO_Port, PIR_Pin);
+
+        if (s == GPIO_PIN_SET) {
+            if (hi_cnt < 255) hi_cnt++;
+            lo_cnt = 0;
+
+            // ★ 상승 에지 1회 처리: 'ready'일 때만
+            if (ready && !high_blocked && hi_cnt >= HI_THR) {
+                s_last_motion = now;
+                printf("Sensing Something\r\n");
+                fan_hold = 1;
+                FAN_ON();
+                LED_ON();
+                high_blocked = true;   // 현재 High 구간은 한 번만 처리
+                ready = false;         // 다음 감지를 받기 전엔 재무장 필요
+            }
+        } else { // LOW
+            if (lo_cnt < 255) lo_cnt++;
+            hi_cnt = 0;
+
+            // High 구간 끝났다고 표시
+            if (high_blocked && lo_cnt >= LO_THR) {
+                high_blocked = false;
+            }
+            // ★ 충분히 LOW가 지속되면(1s) 다음 감지 '재무장'
+            if (lo_cnt >= ARM_LO_THR) {
+                ready = true;
+            }
+        }
+
+        // 타임아웃: 마지막 감지 후 10초 & 현재 LOW가 안정적일 때 OFF
+        if (s_last_motion != 0 &&
+            (now - s_last_motion) >= OFF_WINDOW &&
+            lo_cnt >= LO_THR) {
+            printf("Sensing Nothing\r\n");
+            fan_hold = 0;
+            FAN_OFF();
+            LED_OFF();
+            s_last_motion = 0;
+        }
+
+        osDelayUntil(next_wake);
+        next_wake += period;
+    }
+}
+

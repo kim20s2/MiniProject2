@@ -1,0 +1,24 @@
+/*
+ * PIR_Task.h
+ *
+ *  Created on: Aug 24, 2025
+ *      Author: kim20
+ */
+
+#ifndef INC_PIR_TASK_H_
+#define INC_PIR_TASK_H_
+
+#pragma once
+#include "stm32f4xx_hal.h"
+#include "cmsis_os2.h"
+
+#define PIR_GPIO_Port  GPIOA
+#define PIR_Pin        GPIO_PIN_10
+
+// RFID 등 외부에서 "지금부터 무감지 10초 지나면 OFF" 타이머를 시작
+void PIR_ArmIdleTimer(void);
+
+// 태스크 엔트리
+void PIR_Task(void *argument);
+
+#endif /* INC_PIR_TASK_H_ */

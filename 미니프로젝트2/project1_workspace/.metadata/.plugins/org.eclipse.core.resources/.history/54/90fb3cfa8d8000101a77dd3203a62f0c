@@ -1,0 +1,132 @@
+// Core/Src/LCD_Task.c
+#include "lcd.h"
+#include "main.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include "cmsis_os.h"
+
+// 외부 공유자원
+extern osMutexId_t NTP_MutexHandle;
+extern osMutexId_t Weather_MutexHandle;
+extern time_t ntp_time;
+
+extern volatile float g_t1h;  // °C
+extern volatile int   g_reh;  // %
+extern volatile int   g_pty;  // PTY 코드(0~7)
+
+// 16x2 LCD 가정
+#define LCD_COLS 16
+
+// 강수 텍스트
+static const char* pty_text(int code) {
+    switch (code) {
+        case 0: return "NO";
+        case 1: return "RAIN";
+        case 2: return "R/S";
+        case 3: return "SNOW";
+        case 4: return "SHWR";
+        case 5: return "DROP";
+        case 6: return "D/S";
+        case 7: return "SFLT";
+        default: return "?";
+    }
+}
+
+// 16칸 맞춰 출력(부족하면 공백 패드)
+static void lcd_print_line_padded(uint8_t row, const char *s) {
+    char buf[LCD_COLS + 1];
+    int len = (int)strlen(s);
+    if (len > LCD_COLS) len = LCD_COLS;
+    memset(buf, ' ', LCD_COLS);
+    memcpy(buf, s, len);
+    buf[LCD_COLS] = '\0';
+    LCD_SetCursor(row, 0);
+    LCD_Print(buf);
+}
+
+void LCD_Task(void *argument)
+{
+    LCD_Init();
+    LCD_Clear();
+
+    // --- 시간/스크롤 상태 ---
+    time_t base_epoch = 0;       // 20초마다 NTP에서 동기화
+    uint32_t last_sync_sec = 0;  // 동기화 기준(초 카운터)
+    uint32_t tick = 0;           // 1초 틱 카운터
+    size_t scroll_idx = 0;       // 1행 마퀴 인덱스
+
+    // --- 날씨 캐시 ---
+    float t_c = 0.0f; int rh = -1; int pty = -1;
+
+    // 최초 동기화
+    if (osMutexAcquire(NTP_MutexHandle, pdMS_TO_TICKS(200)) == osOK) {
+        base_epoch = ntp_time;
+        osMutexRelease(NTP_MutexHandle);
+    } else {
+        base_epoch = time(NULL);  // fallback
+    }
+    last_sync_sec = 0;
+    tick = 0;
+
+    for (;;)
+    {
+        // 1) 20초마다 NTP 재동기화
+        if ((tick - last_sync_sec) >= 20) {
+            if (osMutexAcquire(NTP_MutexHandle, pdMS_TO_TICKS(50)) == osOK) {
+                base_epoch = ntp_time;
+                osMutexRelease(NTP_MutexHandle);
+            } else {
+                base_epoch = time(NULL); // 실패 시 현재 시간으로라도
+            }
+            last_sync_sec = tick;
+        }
+
+        // 2) 현재 시각 계산: base + (tick - last_sync_sec)
+        time_t now = base_epoch + (time_t)(tick - last_sync_sec);
+        struct tm *k = localtime(&now);
+
+        // 1행 텍스트 구성: 예) "08-23 19:02:05 KST"
+        // 마퀴(가로 스크롤) 위해 뒤에 공백을 덧붙인 롱버퍼 생성
+        char time_full[64];
+        snprintf(time_full, sizeof(time_full),
+                 "%02d-%02d %02d:%02d:%02d KST   ",
+                 (k->tm_mon + 1), k->tm_mday, k->tm_hour, k->tm_min, k->tm_sec);
+
+        size_t L = strlen(time_full);
+        if (L < LCD_COLS + 1) { // 안전
+            strcat(time_full, "                ");
+            L = strlen(time_full);
+        }
+
+        // 마퀴 윈도우 추출(스크롤)
+        char win[LCD_COLS + 1];
+        for (int i = 0; i < LCD_COLS; ++i) {
+            win[i] = time_full[(scroll_idx + i) % L];
+        }
+        win[LCD_COLS] = '\0';
+        lcd_print_line_padded(0, win);
+
+        // 3) 2행 날씨 읽어서 출력 (짧게 뮤텍스 잡기)
+        if (osMutexAcquire(Weather_MutexHandle, pdMS_TO_TICKS(10)) == osOK) {
+            t_c = g_t1h; rh = g_reh; pty = g_pty;
+            osMutexRelease(Weather_MutexHandle);
+        }
+        // 예) "T=27.1 RH=63 RAIN"
+        char wline[32];
+        if (rh >= 0 && pty >= 0) {
+            snprintf(wline, sizeof(wline), "T=%2.1f RH=%d %s", t_c, rh, pty_text(pty));
+        } else {
+            snprintf(wline, sizeof(wline), "Weather: --");
+        }
+        lcd_print_line_padded(1, wline);
+
+        // 4) 다음 틱
+        scroll_idx = (scroll_idx + 1) % L; // 매초 1칸 스크롤
+        tick++;
+
+        vTaskDelay(pdMS_TO_TICKS(1000)); // 1초 주기
+    }
+}

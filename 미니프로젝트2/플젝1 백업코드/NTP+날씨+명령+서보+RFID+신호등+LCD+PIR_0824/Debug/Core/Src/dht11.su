@@ -1,0 +1,6 @@
+../Core/Src/dht11.c:8:6:DWT_Delay_Init	4	static
+../Core/Src/dht11.c:17:6:DWT_Delay_us	32	static,ignoring_inline_asm
+../Core/Src/dht11.c:26:13:DHT_SetOutput	32	static
+../Core/Src/dht11.c:36:13:DHT_SetInput	32	static
+../Core/Src/dht11.c:46:12:wait_level_with_timeout	32	static
+../Core/Src/dht11.c:58:5:DHT11_Read	48	static

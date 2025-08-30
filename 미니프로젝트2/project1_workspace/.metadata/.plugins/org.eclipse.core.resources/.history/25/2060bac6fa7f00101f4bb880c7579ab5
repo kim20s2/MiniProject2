@@ -1,0 +1,313 @@
+// =============================
+// weather_task.c
+// =============================
+
+#include "cmsis_os.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include "esp.h"
+#include "main.h"
+#include "Servo.h"
+
+volatile float g_t1h = 0.0f;  // 현재기온 °C
+volatile int   g_reh = -1;    // 습도 %
+volatile int   g_pty = -1;    // PTY 코드
+
+extern osMutexId_t Weather_MutexHandle;
+extern osMutexId_t ESP_MutexHandle;
+extern osMutexId_t NTP_MutexHandle;  // ★ 추가
+extern UART_HandleTypeDef huart6;
+
+// ★ NTP_Task가 저장해주는 전역 시간(KST 기준 epoch)
+extern time_t ntp_time;        // ★ 추가
+
+// ★ esp.c 전역 버퍼 접근 (읽기 전용 용도)
+extern cb_data_t cb_data;
+extern char response[MAX_ESP_RX_BUFFER];
+
+static void set_ryg(int r, int y, int g)
+{
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, r ? GPIO_PIN_SET : GPIO_PIN_RESET); // RED
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, y ? GPIO_PIN_SET : GPIO_PIN_RESET); // YELLOW
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, g ? GPIO_PIN_SET : GPIO_PIN_RESET); // GREEN
+}
+
+
+// ★ esp.c에 추가한 프로브 함수 원형
+int esp_link1_tcp_probe(const char *ip_or_host, int port);
+
+// 간단 JSON 파서: "category":"T1H" ... "obsrValue": 27  또는 "obsrValue":"27"
+static int json_pick_value(const char *json, const char *cat, char *out, int out_sz)
+{
+    char key[64];
+    snprintf(key, sizeof(key), "\"category\":\"%s\"", cat);
+    const char *p = strstr(json, key);
+    if (!p) return -1;
+
+    const char *v = strstr(p, "\"obsrValue\"");
+    if (!v) return -1;
+    v = strchr(v, ':');
+    if (!v) return -1;
+    v++; // skip ':'
+
+    // 공백/따옴표 스킵
+    while (*v==' ' || *v=='\"') v++;
+
+    // 숫자/텍스트 토큰 끝까지
+    const char *e = v;
+    while (*e && *e!='\"' && *e!='\r' && *e!='\n' && *e!=',' && *e!='}') e++;
+
+    int len = (int)(e - v);
+    if (len <= 0) return -1;
+    if (len >= out_sz) len = out_sz - 1;
+    memcpy(out, v, len);
+    out[len] = 0;
+    return 0;
+}
+
+// ESP01 "+IPD,<link>,<len>:" 마커 제거 → 순수 HTTP/JSON만 남김
+static int strip_ipd_markers(const char *in, char *out, int out_sz)
+{
+    int w = 0;
+    const char *p = in;
+    while (*p && w < out_sz - 1) {
+        const char *tag = strstr(p, "+IPD,");
+        if (!tag) {
+            int remain = (int)strlen(p);
+            if (remain > out_sz - 1 - w) remain = out_sz - 1 - w;
+            memcpy(out + w, p, remain);
+            w += remain;
+            break;
+        }
+        int seg = (int)(tag - p);
+        if (seg > 0) {
+            if (seg > out_sz - 1 - w) seg = out_sz - 1 - w;
+            memcpy(out + w, p, seg);
+            w += seg;
+        }
+        const char *q = tag + 5; // after "+IPD,"
+        while (*q && *q>='0' && *q<='9') q++; // link
+        if (*q==',') q++;
+        while (*q && *q>='0' && *q<='9') q++; // len
+        if (*q==':') q++;
+        p = q;
+    }
+    out[w] = 0;
+    return w;
+}
+
+// Transfer-Encoding: chunked 간단 디청크
+static int dechunk_simple(const char *in, char *out, int out_sz)
+{
+    int w = 0;
+    const char *p = in;
+    while (*p) {
+        int sz = 0;
+        if (sscanf(p, "%x", &sz) != 1) break;
+        const char *nl = strstr(p, "\r\n");
+        if (!nl) break;
+        p = nl + 2;
+        if (sz == 0) break;
+        if (w + sz > out_sz - 1) sz = out_sz - 1 - w;
+        if (sz <= 0) break;
+        memcpy(out + w, p, sz);
+        w += sz;
+        p += sz;
+        if (p[0]=='\r' && p[1]=='\n') p += 2;
+    }
+    out[w] = 0;
+    return w;
+}
+
+static int kma_ultra_fcst_base(char *date8, char *time4)
+{
+    time_t t;
+    // NTP에서 얻은 epoch 사용
+    if (osMutexAcquire(NTP_MutexHandle, osWaitForever) == osOK) {
+        t = ntp_time;
+        osMutexRelease(NTP_MutexHandle);
+    } else {
+        t = time(NULL); // fallback
+    }
+
+    struct tm *k = localtime(&t);
+    int yyyy = k->tm_year + 1900;
+    int mm   = k->tm_mon + 1;
+    int dd   = k->tm_mday;
+    int hh   = k->tm_hour;
+    int mi   = k->tm_min;
+
+    mi = (mi / 10) * 10; //10분단위로 내림
+
+    // 1시간 단위라서 분은 무시
+    sprintf(date8, "%04d%02d%02d", yyyy, mm, dd);
+    sprintf(time4, "%02d%02d", hh, mi);   // hh시 정각
+    printf("%02d:%02d:00->", hh, mi);
+    return 1;
+}
+
+static const char* pty_text(int code)
+{
+    switch (code) {
+        case 0: return "NO Rain";
+        case 1: return "Rain";
+        case 2: return "Rain/Snow";
+        case 3: return "Snow";
+        case 4: return "Shower";
+        case 5: return "RainDrop";
+        case 6: return "RainDrop/SnowFlying";
+        case 7: return "SnowFlying";
+        default: return "?";
+    }
+}
+
+
+void Weather_Task(void *argument)
+{
+    const char *KMA_HOST = "apihub.kma.go.kr";
+    const char *KMA_IP   = "203.247.96.25";   // nslookup 결과
+    const int NX = 55, NY = 126;              // 격자 좌표(원하면 변경)
+    int prev = -1;
+    uint16_t length;
+
+    for (;;)
+    {
+        if (osMutexAcquire(ESP_MutexHandle, osWaitForever) == osOK) {
+            // 1) 링크1 열기
+            char cmd[128];
+            sprintf(cmd, "AT+CIPSTART=1,\"TCP\",\"%s\",80\r\n", KMA_IP);
+            if (esp_at_command((uint8_t*)cmd, (uint8_t*)response, &length, 5000) == 0) {
+                //printf("[WEATHER] Link1 TCP connect OK\r\n");
+
+                // 2) HTTP GET 문자열 준비
+                char http_req[640];
+                char base_date[9], base_time[5];
+                kma_ultra_fcst_base(base_date, base_time);
+
+                sprintf(http_req,
+                    "GET /api/typ02/openApi/VilageFcstInfoService_2.0/getUltraSrtNcst"
+                    "?authKey=o6iIv1M5RHSoiL9TOaR0jw&pageNo=1&numOfRows=20"
+                    "&dataType=JSON&base_date=%s&base_time=%s&nx=%d&ny=%d HTTP/1.1\r\n"
+                    "Host: %s\r\n"
+                    "Connection: close\r\n\r\n",
+                    base_date, base_time, NX, NY, KMA_HOST);
+
+
+                // 3) AT+CIPSEND=1,<len>
+                sprintf(cmd, "AT+CIPSEND=1,%d\r\n", (int)strlen(http_req));
+                if (esp_at_command((uint8_t*)cmd, (uint8_t*)response, &length, 2000) == 0) {
+                    // (권장) 프롬프트 안정화
+                    vTaskDelay(pdMS_TO_TICKS(50));
+
+                    // 4) payload 송신 (단순 송신)
+                    HAL_UART_Transmit(&huart6, (uint8_t*)http_req, strlen(http_req), 500);
+
+                    // 5) 응답 수신: cb_data에서 rx로 누적 수집 (최대 8초, CLOSED 감지 시 조기 종료)
+                    char rx[MAX_ESP_RX_BUFFER];
+                    int  copied = 0, elapsed = 0;
+                    memset(rx, 0, sizeof(rx));
+
+                    for (;;) {
+                        // CLOSED 들어오면 서버가 응답 끝내고 소켓 닫았다는 의미
+                        if (strstr((char*)cb_data.buf, "CLOSED")) break;
+
+                        if (cb_data.length > 0) {
+                            taskENTER_CRITICAL();
+                            int n = cb_data.length;
+                            if (n > (int)sizeof(rx) - 1 - copied) n = sizeof(rx) - 1 - copied;
+                            memcpy(rx + copied, cb_data.buf, n);
+                            cb_data.length = 0;   // 소비
+                            taskEXIT_CRITICAL();
+                            copied += n;
+                        } else {
+                            vTaskDelay(pdMS_TO_TICKS(20));
+                            elapsed += 20;
+                            if (elapsed >= 8000) break;  // 최대 8초 대기
+                        }
+                    }
+
+                    // 디버그: 원본 앞머리
+                   // { char head[200]={0}; snprintf(head,sizeof(head)-1,"%.*s",180,rx);
+                   //   printf("[WEATHER] RAW head: %s\r\n", head); }
+
+					// ---- HTTP 헤더/본문 분리 ----
+					char *http = strstr(rx, "HTTP/1.1 ");
+					char *hdr_end = http ? strstr(http, "\r\n\r\n") : NULL;
+					char *body = hdr_end ? (hdr_end + 4) : rx;
+
+					// 헤더에서 chunked 여부 확인
+					int is_chunked = 0;
+					if (http && hdr_end) {
+						char save = *hdr_end; *hdr_end = 0;
+						is_chunked = (strstr(http, "Transfer-Encoding: chunked") != NULL);
+						*hdr_end = save;
+					}
+
+					// 1) +IPD 마커 제거
+					static char no_ipd[MAX_ESP_RX_BUFFER];
+					strip_ipd_markers(body, no_ipd, sizeof(no_ipd));
+
+					// 2) (필요시) 디청크
+					static char json_buf[MAX_ESP_RX_BUFFER];
+					const char *json_src = no_ipd;
+					if (is_chunked) {
+						dechunk_simple(no_ipd, json_buf, sizeof(json_buf));
+						json_src = json_buf;
+					}
+
+                    if (strstr(rx, "HTTP/1.1 200")) {
+                        char t1h[16] = "?", reh[16] = "?", pty[16] = "?", rn1[16] = "?";
+                        json_pick_value(json_src, "T1H", t1h, sizeof(t1h));
+                        json_pick_value(json_src, "REH", reh, sizeof(reh));
+                        json_pick_value(json_src, "PTY", pty, sizeof(pty));
+                        json_pick_value(json_src, "RN1", rn1, sizeof(rn1));
+
+                        int pty_code = atoi(pty);
+                        float temp_c  = atof(t1h);  // 현재기온
+
+                        printf("[WEATHER][Gangseo-gu] T=%s°C, RH=%s%%, RAIN=%s, RN1=%smm\r\n",
+                               t1h, reh, pty_text(pty_code), rn1);
+
+                        if (prev != pty_code) {
+                             prev = pty_code;
+                             Servo_SetAngle(pty_code ? 90 : 0);
+                         }
+
+                        // ★ LCD용 공유 값 업데이트
+                        if (osMutexAcquire(Weather_MutexHandle, osWaitForever) == osOK) {
+                            g_t1h = (float)atof(t1h);
+                            g_reh = atoi(reh);
+                            g_pty = pty_code;
+                            osMutexRelease(Weather_MutexHandle);
+                        }
+
+                        int is_precip = (pty_code != 0);
+
+                        if (is_precip || temp_c >= 35.0f) {
+                            set_ryg(1, 0, 0);  // RED
+                            printf("[RYG] RED ON (precip=%d, T=%.1f)\r\n", is_precip, temp_c);
+                        } else if (temp_c >= 30.0f) {
+                            set_ryg(0, 1, 0);  // YELLOW
+                            printf("[RYG] YELLOW ON (T=%.1f)\r\n", temp_c);
+                        } else {
+                            set_ryg(0, 0, 1);  // GREEN
+                            printf("[RYG] GREEN ON (T=%.1f)\r\n", temp_c);
+                        }
+
+                    } else {
+                        printf("[WEATHER] HTTP not 200 (len=%d)\r\n", copied);
+                    }
+                }
+                // 6) 링크1 닫기
+                esp_at_command((uint8_t*)"AT+CIPCLOSE=1\r\n", (uint8_t*)response, &length, 1000);
+            } else {
+                printf("[WEATHER] Link1 TCP connect FAIL\r\n");
+            }
+
+            osMutexRelease(ESP_MutexHandle);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(30000));  // 60초 주기
+    }
+}

@@ -1,0 +1,16 @@
+/*
+ * Servo_Task.h
+ *
+ *  Created on: Aug 23, 2025
+ *      Author: kim20
+ */
+
+#ifndef INC_SERVO_H_
+#define INC_SERVO_H_
+
+// servo.h
+#pragma once
+#include "main.h"
+
+void Servo_Init(void);
+void Servo_SetAngle(int angle);
