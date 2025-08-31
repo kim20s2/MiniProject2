@@ -70,9 +70,9 @@ C / STM32 / FreeRTOS / UART / I2C / GPIO / WiFi / Bluetooth / MariaDB / Sensor /
 - **ScheduleTask** : 예약·자동화 기능 수행 (Low, 128×4)
 
 - **BTTask** : 블루투스(UART6) 통신 처리 (로그 전송, 외부 명령)  
-- **SensorTask** : RTC·DS1302·알람 시간 관리, 버튼/리모컨 입력 반영  
+- **SensorTask** : 화재·진동·가스 센서 감지 및 이벤트 처리  
 - **LCDTask** : Queue & Mutex 기반 LCD1602 출력 (시간·알람·상태 표시)  
-- **PIRTask** : 인체 감지(PIR 센서) 이벤트 처리, 알람/LED 제어와 연동  
+- **PIRTask** : 인체 감지(PIR 센서) 이벤트 처리, Buzzer 알람/LED 제어와 연동  
 
 **동기화 리소스 (Mutex)**  
 - `ESP_Mutex` : WiFi/ESP 통신 보호  
