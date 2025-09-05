@@ -45,7 +45,7 @@ STM32 보드와 Raspberry Pi 서버를 중심으로, **WiFi·Bluetooth·MariaDB*
 
 - **출입 관리**
   - RFID 태그 인증 → 출입 기록 DB 저장  
-  - PIR + ESP32-CAM → 방문자 감지 및 영상 기록  
+  - PIR → 방문자 감지
 
 - **자동화 기능**
   - 예약 시스템 → 조명·에어컨·난방·창문 개폐 자동화  
