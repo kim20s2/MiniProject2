@@ -26,7 +26,7 @@ STM32 보드와 Raspberry Pi 서버를 중심으로, **WiFi·Bluetooth·MariaDB*
 - FreeRTOS (멀티태스킹 기반 태스크 관리)  
 - HAL Driver (STM32 주변장치 제어)  
 - MariaDB (센서 데이터 저장 및 로그 관리)  
-- Python (라즈베리파이 서버 및 API 연동)  
+- Linux, C (라즈베리파이 서버 및 API 연동)  
 - Mobile/Web App (실시간 모니터링 & 제어)  
 
 ---
