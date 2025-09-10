@@ -2,7 +2,7 @@
 
 ## 📌 프로젝트 개요
 STM32 보드와 Raspberry Pi 서버를 중심으로, **WiFi·Bluetooth·MariaDB**를 연동한 스마트홈 시스템을 구현했습니다.  
-화재/가스/진동 센서와 PIR 모션 감지, 기상청 날씨 정보 기반 환기, 온습도 기반 냉난방 제어, RFID 출입 관리, NTP 서버 시간 기반 예약 기능 **지능형 안전·편의 기능**을 제공하는 AIoT 기반 주거 환경 솔루션입니다.  
+화재/가스/진동 센서와 PIR 모션 감지, 기상청 정보기반 환기 기능, 온습도 기반 냉난방 제어, RFID 출입 관리, NTP 서버시간 기반 예약 기능 **지능형 안전·편의 기능**을 제공하는 AIoT 기반 주거 환경 솔루션입니다.  
 
 ---
 
@@ -17,7 +17,6 @@ STM32 보드와 Raspberry Pi 서버를 중심으로, **WiFi·Bluetooth·MariaDB*
 - **STM32 Nucleo-F411RE** (센서 데이터 처리, 제어 로직, FreeRTOS 태스크 실행)  
 - **Raspberry Pi 5** (서버 + MariaDB, 중앙 제어)  
 - **ESP8266 WiFi 모듈** (서버와 데이터 송수신)  
-- **ESP32-CAM** (실시간 영상 스트리밍, 외부 보안 감시)  
 - **센서류** : 온습도(DHT11), 가스/화재, 진동, PIR 센서  
 - **액추에이터** : Servo Motor (창문 개폐), LED, Buzzer, Fan  
 - **RFID 리더기** (출입 인증 및 로그 기록)  
@@ -35,13 +34,12 @@ STM32 보드와 Raspberry Pi 서버를 중심으로, **WiFi·Bluetooth·MariaDB*
 ## ⚙️ 주요 기능
 - **재난 감지 및 안전**
   - 가스·화재·진동 센서 → 위험 감지 시 즉각 경보 & 서버 알림  
-  - PIR 센서 → 침입 감지 및 푸시 알림  
-  - ESP32-CAM → 외부 영상 확인, 출입자 모니터링  
+  - PIR 센서 → 침입 감지 및 푸시 알림   
 
 - **환경 제어**
   - 온습도 센서 → 냉난방 자동 제어  
   - 기상청 API 기반 날씨 데이터 수집 → 환기(창문 개폐) 및 냉난방 최적화  
-  - LED 색상으로 날씨·온도 직관적 표시 (녹색/노란색/빨간색)  
+  - LED 색상으로 외부 날씨·온도 직관적 표시 (녹색/노란색/빨간색)  
 
 - **출입 관리**
   - RFID 태그 인증 → 출입 기록 DB 저장  
@@ -54,7 +52,7 @@ STM32 보드와 Raspberry Pi 서버를 중심으로, **WiFi·Bluetooth·MariaDB*
 ---
 
 ## 💡 사용 기술
-C / STM32 / FreeRTOS / UART / I2C / GPIO / WiFi / Bluetooth / MariaDB / Sensor / NTP / Weather API / ESP32-CAM / RFID  
+C / STM32 / FreeRTOS / UART / I2C / GPIO / WiFi / Bluetooth / MariaDB / Sensor / NTP / Weather API / RFID  
 
 ---
 
@@ -93,7 +91,7 @@ C / STM32 / FreeRTOS / UART / I2C / GPIO / WiFi / Bluetooth / MariaDB / Sensor /
 - **WiFi·Bluetooth + MariaDB 연동**으로 실시간 데이터 수집·저장·모니터링 구현  
 - **재난 대응 기능** : 가스·화재·진동·침입 상황 조기 감지 및 알림  
 - **환경 제어 기능** : 자동 환기·냉난방·에너지 효율 최적화 구현  
-- **보안 강화** : PIR·ESP32-CAM·RFID 연동으로 외부 침입 감지 & 출입 로그 관리  
+- **보안 강화** : PIR·RFID 연동으로 외부 침입 감지 & 출입 로그 관리
 - **FreeRTOS 멀티태스킹 설계** → 안정적 동작 보장  
 
 ---
