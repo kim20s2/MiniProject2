@@ -18,7 +18,7 @@ STM32 보드와 Raspberry Pi 서버를 중심으로, **WiFi·Bluetooth·MariaDB*
 - **Raspberry Pi 5** (서버 + MariaDB, 중앙 제어)  
 - **ESP8266 WiFi 모듈** (서버와 데이터 송수신)  
 - **센서류** : 온습도(DHT11), 가스/화재, 진동, PIR 센서  
-- **액추에이터** : Servo Motor (창문 개폐), LED, Buzzer (알람용), Fan (냉난방 제어)
+- **액추에이터** : Servo Motor (창문 개폐), LED, Buzzer (알람), Fan (냉난방 제어)
 - **RFID 리더기** (출입 인증 및 로그 기록)  
 
 ### 🔹 Software
